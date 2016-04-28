@@ -1,0 +1,72 @@
+{
+    "Resources": {
+        "LambdaCleanBaseImagesRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "ec2:DescribeImages",
+                                        "ec2:DeregisterImage"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "arn:aws:logs:*:*:*"
+                                    ]
+                                }
+                            ]
+                        },
+                        "PolicyName": "LambdaCleanBaseImagesPolicy"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "LambdaFunction": {
+            "Properties": {
+                "Code": {
+                    "ZipFile": "from __future__ import print_function\nimport boto3\nimport operator\n\n\ndef lambda_handler(event, context):\n    LIMIT = 10\n    client = boto3.client('ec2', 'eu-west-1')\n\n    response = client.describe_images(\n        Owners=['self'],\n        Filters=[{'Name': 'tag:Type', 'Values': ['BaseImage']}]\n    )\n\n    if len(response['Images']) == 0:\n        raise Exception('no AMIs with Type=BaseImage tag found')\n\n    images = {}\n    for image in response['Images']:\n        for tag in image['Tags']:\n            if tag['Key'] == \"Project\":\n                if tag['Value'] not in images.keys():\n                    images[tag['Value']] = {}\n                images[tag['Value']][image['ImageId']] = image['CreationDate']\n                break\n\n    to_remove = [];\n    for project in images:\n        sorted_x = sorted(images[project].items(), key=operator.itemgetter(1), reverse=True)\n        if len(sorted_x) > LIMIT:\n            to_remove = to_remove + [i[0] for i in sorted_x[LIMIT:]]\n\n    if len(to_remove) == 0:\n        print(\"Nothing to do\")\n        return 0\n\n    print(\"Will remove \" + str(len(to_remove)) + \" images\")\n\n    for ami in to_remove:\n        print(\"Removing: \" + ami)\n        client.deregister_image(ImageId=ami)\n\n\nif __name__ == '__main__':\n    lambda_handler(None, None)\n"
+                },
+                "Handler": "lambda_handler.lambda_handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaCleanBaseImagesRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python2.7",
+                "Timeout": 10
+            },
+            "Type": "AWS::Lambda::Function"
+        }
+    }
+}
