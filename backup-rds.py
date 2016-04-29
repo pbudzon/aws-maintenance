@@ -83,7 +83,7 @@ def remove_old_snapshots():
 
     for project in snapshots_per_project:
         if len(snapshots_per_project[project]) > 1:
-            sorted_list = sorted(snapshots_per_project[project].items(), key=operator.itemgetter(1), reverse=False)
+            sorted_list = sorted(snapshots_per_project[project].items(), key=operator.itemgetter(1), reverse=True)
             to_remove = [i[0] for i in sorted_list[1:]]
 
             for snapshot in to_remove:

@@ -19,7 +19,7 @@ param_alarm_email = t.add_parameter(Parameter(
     Type="String",
 ))
 
-role = t.add_resource(Role(
+ec_images_role = t.add_resource(Role(
     "LambdaCleanImagesRole",
     AssumeRolePolicyDocument=Policy(
         Statement=[
@@ -94,6 +94,35 @@ backup_rds_role = t.add_resource(Role(
     )]
 ))
 
+basic_role = t.add_resource(Role(
+    "LambdaBasicRole",
+    AssumeRolePolicyDocument=Policy(
+        Statement=[
+            Statement(
+                Effect=Allow, Action=[AssumeRole],
+                Principal=Principal(
+                    "Service", ["lambda.amazonaws.com"]
+                )
+            )
+        ]
+    ),
+    Policies=[IAMPolicy(
+        "LambdaCleanBaseImagesPolicy",
+        PolicyName="LambdaCleanBaseImagesPolicy",
+        PolicyDocument=Policy(Statement=[
+            Statement(
+                Effect=Allow,
+                Action=[
+                    Action('logs', 'CreateLogGroup'),
+                    Action('logs', 'CreateLogStream'),
+                    Action('logs', 'PutLogEvents'),
+                ],
+                Resource=['arn:aws:logs:*:*:*']
+            )
+        ])
+    )]
+))
+
 source_file = os.path.realpath(__file__ + '/../../../clean-base-images.py')
 with open(source_file, 'r') as content_file:
     content = content_file.read()
@@ -109,7 +138,7 @@ base_function = t.add_resource(Function(
     ),
     Handler='index.lambda_handler',
     MemorySize=128,
-    Role=GetAtt(role, 'Arn'),
+    Role=GetAtt(ec_images_role, 'Arn'),
     Runtime='python2.7',
     Timeout=10
 ))
@@ -129,7 +158,7 @@ release_function = t.add_resource(Function(
     ),
     Handler='index.lambda_handler',
     MemorySize=128,
-    Role=GetAtt(role, 'Arn'),
+    Role=GetAtt(ec_images_role, 'Arn'),
     Runtime='python2.7',
     Timeout=10
 ))
@@ -152,6 +181,26 @@ backup_rds_function = t.add_resource(Function(
     Role=GetAtt(backup_rds_role, 'Arn'),
     Runtime='python2.7',
     Timeout=10
+))
+
+source_file = os.path.realpath(__file__ + '/../../../clean-es-indices.py')
+with open(source_file, 'r') as content_file:
+    content = content_file.read()
+
+if len(content) > 4096:
+    raise Exception("Clean ES function too long! Has " + str(len(content)))
+
+clea_es_function = t.add_resource(Function(
+    'LambdaCleanESFunction',
+    Description='Removes old ElasticSearch indexes',
+    Code=Code(
+        ZipFile=content
+    ),
+    Handler='index.lambda_handler',
+    MemorySize=128,
+    Role=GetAtt(basic_role, 'Arn'),
+    Runtime='python2.7',
+    Timeout=60
 ))
 
 alarm_topic = t.add_resource(Topic(
@@ -233,6 +282,5 @@ t.add_resource(Alarm(
     Threshold='0',
     AlarmActions=[Ref(alarm_topic)]
 ))
-
 
 print t.to_json()
