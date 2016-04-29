@@ -94,8 +94,8 @@ backup_rds_role = t.add_resource(Role(
     )]
 ))
 
-basic_role = t.add_resource(Role(
-    "LambdaBasicRole",
+es_exec_role = t.add_resource(Role(
+    "LambdaESExecRole",
     AssumeRolePolicyDocument=Policy(
         Statement=[
             Statement(
@@ -118,6 +118,13 @@ basic_role = t.add_resource(Role(
                     Action('logs', 'PutLogEvents'),
                 ],
                 Resource=['arn:aws:logs:*:*:*']
+            ),
+            Statement(
+                Effect=Allow,
+                Action=[
+                    Action('es', '*'),
+                ],
+                Resource=['arn:aws:es:*:*:*']
             )
         ])
     )]
@@ -198,7 +205,7 @@ clea_es_function = t.add_resource(Function(
     ),
     Handler='index.lambda_handler',
     MemorySize=128,
-    Role=GetAtt(basic_role, 'Arn'),
+    Role=GetAtt(es_exec_role, 'Arn'),
     Runtime='python2.7',
     Timeout=60
 ))
@@ -275,6 +282,42 @@ t.add_resource(Alarm(
         MetricDimension(
             Name='FunctionName',
             Value=Ref(backup_rds_function)
+        )
+    ],
+    Period=300,
+    Statistic='Maximum',
+    Threshold='0',
+    AlarmActions=[Ref(alarm_topic)]
+))
+
+t.add_resource(Alarm(
+    "LambdaCleanESErrorsAlarm",
+    ComparisonOperator='GreaterThanThreshold',
+    EvaluationPeriods=1,
+    MetricName='Errors',
+    Namespace='AWS/Lambda',
+    Dimensions=[
+        MetricDimension(
+            Name='FunctionName',
+            Value=Ref(clea_es_function)
+        )
+    ],
+    Period=300,
+    Statistic='Maximum',
+    Threshold='0',
+    AlarmActions=[Ref(alarm_topic)]
+))
+
+t.add_resource(Alarm(
+    "LambdaCleanEESThrottlesAlarm",
+    ComparisonOperator='GreaterThanThreshold',
+    EvaluationPeriods=1,
+    MetricName='Throttles',
+    Namespace='AWS/Lambda',
+    Dimensions=[
+        MetricDimension(
+            Name='FunctionName',
+            Value=Ref(clea_es_function)
         )
     ],
     Period=300,

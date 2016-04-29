@@ -172,57 +172,67 @@
             },
             "Type": "AWS::Lambda::Function"
         },
-        "LambdaBasicRole": {
+        "LambdaCleanEESThrottlesAlarm": {
             "Properties": {
-                "AssumeRolePolicyDocument": {
-                    "Statement": [
-                        {
-                            "Action": [
-                                "sts:AssumeRole"
-                            ],
-                            "Effect": "Allow",
-                            "Principal": {
-                                "Service": [
-                                    "lambda.amazonaws.com"
-                                ]
-                            }
-                        }
-                    ]
-                },
-                "Policies": [
+                "AlarmActions": [
                     {
-                        "PolicyDocument": {
-                            "Statement": [
-                                {
-                                    "Action": [
-                                        "logs:CreateLogGroup",
-                                        "logs:CreateLogStream",
-                                        "logs:PutLogEvents"
-                                    ],
-                                    "Effect": "Allow",
-                                    "Resource": [
-                                        "arn:aws:logs:*:*:*"
-                                    ]
-                                }
-                            ]
-                        },
-                        "PolicyName": "LambdaCleanBaseImagesPolicy"
+                        "Ref": "LambdaErrorTopic"
                     }
-                ]
+                ],
+                "ComparisonOperator": "GreaterThanThreshold",
+                "Dimensions": [
+                    {
+                        "Name": "FunctionName",
+                        "Value": {
+                            "Ref": "LambdaCleanESFunction"
+                        }
+                    }
+                ],
+                "EvaluationPeriods": 1,
+                "MetricName": "Throttles",
+                "Namespace": "AWS/Lambda",
+                "Period": 300,
+                "Statistic": "Maximum",
+                "Threshold": "0"
             },
-            "Type": "AWS::IAM::Role"
+            "Type": "AWS::CloudWatch::Alarm"
+        },
+        "LambdaCleanESErrorsAlarm": {
+            "Properties": {
+                "AlarmActions": [
+                    {
+                        "Ref": "LambdaErrorTopic"
+                    }
+                ],
+                "ComparisonOperator": "GreaterThanThreshold",
+                "Dimensions": [
+                    {
+                        "Name": "FunctionName",
+                        "Value": {
+                            "Ref": "LambdaCleanESFunction"
+                        }
+                    }
+                ],
+                "EvaluationPeriods": 1,
+                "MetricName": "Errors",
+                "Namespace": "AWS/Lambda",
+                "Period": 300,
+                "Statistic": "Maximum",
+                "Threshold": "0"
+            },
+            "Type": "AWS::CloudWatch::Alarm"
         },
         "LambdaCleanESFunction": {
             "Properties": {
                 "Code": {
-                    "ZipFile": "import sys, os, datetime, hashlib, hmac, urllib2, json\n\nENDPOINT = 'search-qa-nexus-cxr4m5dbpyd6pnzqs4lqlks53y.eu-west-1.es.amazonaws.com'\n\n\ndef sign(key, msg):\n    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()\n\n\ndef getSignatureKey(key, dateStamp, regionName, serviceName):\n    kDate = sign(('AWS4' + key).encode('utf-8'), dateStamp)\n    kRegion = sign(kDate, regionName)\n    kService = sign(kRegion, serviceName)\n    kSigning = sign(kService, 'aws4_request')\n    return kSigning\n\n\ndef get_signature(method, canonical_uri):\n    region = 'eu-west-1'\n    service = 'es'\n    access_key = os.environ.get('AWS_ACCESS_KEY_ID')\n    secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')\n    session_key = os.environ.get('AWS_SESSION_TOKEN')\n    t = datetime.datetime.utcnow()\n    amzdate = t.strftime('%Y%m%dT%H%M%SZ')\n    datestamp = t.strftime('%Y%m%d')\n    canonical_querystring = ''\n    canonical_headers = 'host:' + ENDPOINT + '\\nx-amz-date:' + amzdate + '\\nx-amz-security-token:' + session_key + \"\\n\"\n    signed_headers = 'host;x-amz-date;x-amz-security-token'\n    payload_hash = hashlib.sha256('').hexdigest()\n    canonical_request = method + '\\n' + canonical_uri + '\\n' + canonical_querystring + '\\n' + canonical_headers + '\\n' + signed_headers + '\\n' + payload_hash\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = datestamp + '/' + region + '/' + service + '/' + 'aws4_request'\n    string_to_sign = algorithm + '\\n' + amzdate + '\\n' + credential_scope + '\\n' + hashlib.sha256(\n        canonical_request).hexdigest()\n    signing_key = getSignatureKey(secret_key, datestamp, region, service)\n    signature = hmac.new(signing_key, (string_to_sign).encode('utf-8'), hashlib.sha256).hexdigest()\n    authorization_header = algorithm + ' ' + 'Credential=' + access_key + '/' + credential_scope + ', ' + 'SignedHeaders=' + signed_headers + ', ' + 'Signature=' + signature\n    headers = {'x-amz-date': amzdate, 'x-amz-security-token': session_key, 'Authorization': authorization_header}\n    request_url = 'https://' + ENDPOINT + canonical_uri + '?' + canonical_querystring\n\n    return {'url': request_url, 'headers': headers}\n\n\ndef lambda_handler(event, context):\n    INDEXPREFIX = 'cwl-'\n    TOLEAVE = 20\n\n    response = json.loads(get_index_list())\n    indexes = []\n    for index in response:\n        if index.startswith(INDEXPREFIX):\n            indexes.append(index)\n\n    indexes.sort(reverse=True)\n    to_remove = indexes[TOLEAVE:]\n    for index in to_remove:\n        print(\"Removing \" + index)\n        delete_index(index)\n\n\ndef delete_index(index):\n    info = get_signature('DELETE', '/' + index)\n\n    opener = urllib2.build_opener(urllib2.HTTPHandler)\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    request.get_method = lambda: 'DELETE'\n\n    r = opener.open(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n\ndef get_index_list():\n    info = get_signature('GET', '/_aliases')\n\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    r = urllib2.urlopen(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n    return r.read()\n\n\nif __name__ == '__main__':\n    lambda_handler(None, None)\n"
+                    "ZipFile": "import sys, os, datetime, hashlib, hmac, urllib2, json\n\nENDPOINTS_ACCOUNTS = {\n    '678957977264': 'search-qa-nexus-cxr4m5dbpyd6pnzqs4lqlks53y.eu-west-1.es.amazonaws.com',\n    '800540593336': 'search-live-nexus-6v26agrr6gnihjmq7c6ki36tcm.eu-west-1.es.amazonaws.com'\n}\n\nTHRESHOLD_ACCOUNTS = {\n    '678957977264': 20,\n    '800540593336': 60\n}\n\ndef sign(key, msg):\n    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()\n\n\ndef getSignatureKey(key, dateStamp, regionName, serviceName):\n    kDate = sign(('AWS4' + key).encode('utf-8'), dateStamp)\n    kRegion = sign(kDate, regionName)\n    kService = sign(kRegion, serviceName)\n    kSigning = sign(kService, 'aws4_request')\n    return kSigning\n\n\ndef get_signature(endpoint, method, canonical_uri):\n    region = 'eu-west-1'\n    service = 'es'\n    access_key = os.environ.get('AWS_ACCESS_KEY_ID')\n    secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')\n    session_key = os.environ.get('AWS_SESSION_TOKEN')\n    t = datetime.datetime.utcnow()\n    amzdate = t.strftime('%Y%m%dT%H%M%SZ')\n    datestamp = t.strftime('%Y%m%d')\n    canonical_querystring = ''\n    canonical_headers = 'host:' + endpoint + '\\nx-amz-date:' + amzdate + '\\nx-amz-security-token:' + session_key + \"\\n\"\n    signed_headers = 'host;x-amz-date;x-amz-security-token'\n    payload_hash = hashlib.sha256('').hexdigest()\n    canonical_request = method + '\\n' + canonical_uri + '\\n' + canonical_querystring + '\\n' + canonical_headers + '\\n' + signed_headers + '\\n' + payload_hash\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = datestamp + '/' + region + '/' + service + '/' + 'aws4_request'\n    string_to_sign = algorithm + '\\n' + amzdate + '\\n' + credential_scope + '\\n' + hashlib.sha256(\n        canonical_request).hexdigest()\n    signing_key = getSignatureKey(secret_key, datestamp, region, service)\n    signature = hmac.new(signing_key, (string_to_sign).encode('utf-8'), hashlib.sha256).hexdigest()\n    authorization_header = algorithm + ' ' + 'Credential=' + access_key + '/' + credential_scope + ', ' + 'SignedHeaders=' + signed_headers + ', ' + 'Signature=' + signature\n    headers = {'x-amz-date': amzdate, 'x-amz-security-token': session_key, 'Authorization': authorization_header}\n    request_url = 'https://' + endpoint + canonical_uri + '?' + canonical_querystring\n\n    return {'url': request_url, 'headers': headers}\n\n\ndef lambda_handler(event, context):\n    INDEXPREFIX = 'cwl-'\n\n    if 'account' in event:\n        if event['account'] not in ENDPOINTS_ACCOUNTS.keys():\n            raise Exception(\"No endpoint configured for account \" + str(event['account']))\n        ENDPOINT = ENDPOINTS_ACCOUNTS[event['account']]\n        TOLEAVE = THRESHOLD_ACCOUNTS[event['account']]\n    else:\n        raise Exception(\"No account specified in event\")\n\n    response = json.loads(get_index_list(ENDPOINT))\n    indexes = []\n    for index in response:\n        if index.startswith(INDEXPREFIX):\n            indexes.append(index)\n\n    indexes.sort(reverse=True)\n    to_remove = indexes[TOLEAVE:]\n    for index in to_remove:\n        print(\"Removing \" + index)\n        delete_index(ENDPOINT, index)\n\n\ndef delete_index(endpoint, index):\n    info = get_signature(endpoint, 'DELETE', '/' + index)\n\n    opener = urllib2.build_opener(urllib2.HTTPHandler)\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    request.get_method = lambda: 'DELETE'\n\n    r = opener.open(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n\ndef get_index_list(endpoint):\n    info = get_signature(endpoint, 'GET', '/_aliases')\n\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    r = urllib2.urlopen(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n    return r.read()\n\n\nif __name__ == '__main__':\n    lambda_handler({'account': '678957977264'}, None)\n"
                 },
                 "Description": "Removes old ElasticSearch indexes",
                 "Handler": "index.lambda_handler",
                 "MemorySize": 128,
                 "Role": {
                     "Fn::GetAtt": [
-                        "LambdaBasicRole",
+                        "LambdaESExecRole",
                         "Arn"
                     ]
                 },
@@ -271,6 +281,55 @@
                                     "Effect": "Allow",
                                     "Resource": [
                                         "arn:aws:logs:*:*:*"
+                                    ]
+                                }
+                            ]
+                        },
+                        "PolicyName": "LambdaCleanBaseImagesPolicy"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "LambdaESExecRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "arn:aws:logs:*:*:*"
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "es:*"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "arn:aws:es:*:*:*"
                                     ]
                                 }
                             ]
