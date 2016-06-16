@@ -1,6 +1,13 @@
 # aws-maintenance
 Collection of scripts and lambda functions used for maintaining AWS
 
+## cloudtrail-monitor.py
+
+Lambda function which monitors CloudTrail logs and sends SNS notification on `LaunchInstances` event. This can be modified to look for and respond to any AWS API calls as needed.
+
+Use `infrastructure/templates/cloudtrail-notifications.json` CloudFormation template to create the Lambda, CloudTrail and SNS topics. In the Outputs of the CloudFormation
+stack, you'll find the SNS topic to which you can subscribe to receive the notifications.
+
 ## backup-rds.py
 
 Lambda function used to copy RDS snapshot from eu-west-1 (Ireland) to eu-central-1 (Frankfurt). One (latest) copy for each RDS instance is kept in Frankfurt.

@@ -1,0 +1,348 @@
+{
+    "Description": "Lambda function monitoring cloudtrail logs",
+    "Outputs": {
+        "SNSNotificationTopic": {
+            "Description": "SNS topic to which the alerts will be send",
+            "Value": {
+                "Ref": "NotifcationTopic"
+            }
+        }
+    },
+    "Resources": {
+        "Bucket": {
+            "DeletionPolicy": "Retain",
+            "Properties": {
+                "AccessControl": "Private",
+                "BucketName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            {
+                                "Ref": "AWS::AccountId"
+                            }
+                        ]
+                    ]
+                }
+            },
+            "Type": "AWS::S3::Bucket"
+        },
+        "BucketPolicy": {
+            "Properties": {
+                "Bucket": {
+                    "Ref": "Bucket"
+                },
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "s3:GetBucketAcl"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "cloudtrail.amazonaws.com"
+                                ]
+                            },
+                            "Resource": [
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "arn:aws:s3:::",
+                                            {
+                                                "Ref": "Bucket"
+                                            }
+                                        ]
+                                    ]
+                                }
+                            ],
+                            "Sid": "AWSCloudTrailAclCheck"
+                        },
+                        {
+                            "Action": [
+                                "s3:PutObject"
+                            ],
+                            "Condition": {
+                                "StringEquals": {
+                                    "s3:x-amz-acl": "bucket-owner-full-control"
+                                }
+                            },
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "cloudtrail.amazonaws.com"
+                                ]
+                            },
+                            "Resource": [
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "arn:aws:s3:::",
+                                            {
+                                                "Ref": "Bucket"
+                                            },
+                                            "/AWSLogs/",
+                                            {
+                                                "Ref": "AWS::AccountId"
+                                            },
+                                            "/*"
+                                        ]
+                                    ]
+                                }
+                            ],
+                            "Sid": "AWSCloudTrailWrite"
+                        }
+                    ]
+                }
+            },
+            "Type": "AWS::S3::BucketPolicy"
+        },
+        "CloudTrail": {
+            "DependsOn": "BucketPolicy",
+            "Properties": {
+                "IncludeGlobalServiceEvents": "true",
+                "IsLogging": "true",
+                "IsMultiRegionTrail": "true",
+                "S3BucketName": {
+                    "Ref": "Bucket"
+                },
+                "SnsTopicName": {
+                    "Ref": "CloudtrailTopic"
+                }
+            },
+            "Type": "AWS::CloudTrail::Trail"
+        },
+        "CloudtrailTopic": {
+            "Properties": {
+                "Subscription": [
+                    {
+                        "Endpoint": {
+                            "Fn::GetAtt": [
+                                "LambdaFunction",
+                                "Arn"
+                            ]
+                        },
+                        "Protocol": "lambda"
+                    }
+                ]
+            },
+            "Type": "AWS::SNS::Topic"
+        },
+        "CloudtrailTopicPolicy": {
+            "Properties": {
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sns:publish"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "cloudtrail.amazonaws.com"
+                                ]
+                            },
+                            "Resource": [
+                                {
+                                    "Ref": "CloudtrailTopic"
+                                }
+                            ],
+                            "Sid": "AWSCloudTrailSNSPolicy"
+                        }
+                    ]
+                },
+                "Topics": [
+                    {
+                        "Ref": "CloudtrailTopic"
+                    }
+                ]
+            },
+            "Type": "AWS::SNS::TopicPolicy"
+        },
+        "LambdaErrorsAlarm": {
+            "Properties": {
+                "AlarmActions": [
+                    {
+                        "Ref": "NotifcationTopic"
+                    }
+                ],
+                "ComparisonOperator": "GreaterThanThreshold",
+                "Dimensions": [
+                    {
+                        "Name": "FunctionName",
+                        "Value": {
+                            "Ref": "LambdaFunction"
+                        }
+                    }
+                ],
+                "EvaluationPeriods": 1,
+                "MetricName": "Errors",
+                "Namespace": "AWS/Lambda",
+                "Period": 300,
+                "Statistic": "Maximum",
+                "Threshold": "0"
+            },
+            "Type": "AWS::CloudWatch::Alarm"
+        },
+        "LambdaFunction": {
+            "Properties": {
+                "Code": {
+                    "ZipFile": "import json\nimport boto3\nimport gzip\n\n\ndef lambda_handler(event, context):\n    sns_topic = None\n\n    info = boto3.client('lambda').get_function(\n        FunctionName=context.function_name\n    )\n\n    iam = boto3.client('iam')\n    role_name = info['Configuration']['Role'].split('/')[1]\n\n    policies = iam.list_role_policies(\n        RoleName=role_name\n    )\n\n    for policy in policies['PolicyNames']:\n        details = iam.get_role_policy(\n            RoleName=role_name,\n            PolicyName=policy\n        )\n\n        for statement in details['PolicyDocument']['Statement']:\n            for action in statement['Action']:\n                if action == 'sns:publish':\n                    sns_topic = statement['Resource']\n                    break\n\n    if sns_topic is None:\n        raise Exception(\"Could not find SNS topic for notifications!\")\n\n    sns = boto3.client('sns')\n\n    if 'Records' not in event:\n        raise Exception(\"Invalid message received!\")\n\n    for record in event['Records']:\n        if 'Message' not in record['Sns']:\n            print(\"invalid record!\")\n            print(record)\n\n        message = json.loads(record['Sns']['Message'])\n\n        if 's3Bucket' not in message or 's3ObjectKey' not in message:\n            raise Exception(\"s3Bucket or s3ObjectKey missing from Message!\")\n\n        s3 = boto3.resource('s3')\n\n        for s3key in message['s3ObjectKey']:\n            s3.meta.client.download_file(message['s3Bucket'], s3key, '/tmp/s3file.json.gz')\n\n            with gzip.open('/tmp/s3file.json.gz', 'rb') as f:\n                file_content = json.loads(f.read())\n                for record in file_content['Records']:\n                    if record['eventSource'] == \"ec2.amazonaws.com\" and record['eventName'] == 'RunInstances':\n                        print(record)\n                        for topic in sns_topic:\n                            sns.publish(\n                                TopicArn=topic,\n                                Message=json.dumps(record),\n                                Subject=\"RunInstances invoked at \" + record['eventTime']\n                            )\n\n\nif __name__ == '__main__':\n    lambda_handler({\n        \"Records\": [{\n            \"Sns\": {\n                \"Message\": \"{\\\"s3Bucket\\\":\\\"cloudtrail-xxx\\\",\\\"s3ObjectKey\\\":[\\\"AWSLogs/xxx/CloudTrail/ap-northeast-1/2016/06/15/abc.json.gz\\\"]}\"\n            }\n        }]\n    }, None)\n"
+                },
+                "Description": "Monitors CloudTrail",
+                "Handler": "index.lambda_handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python2.7",
+                "Timeout": 10
+            },
+            "Type": "AWS::Lambda::Function"
+        },
+        "LambdaPermission": {
+            "Properties": {
+                "Action": "lambda:InvokeFunction",
+                "FunctionName": {
+                    "Ref": "LambdaFunction"
+                },
+                "Principal": "sns.amazonaws.com",
+                "SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                },
+                "SourceArn": {
+                    "Ref": "CloudtrailTopic"
+                }
+            },
+            "Type": "AWS::Lambda::Permission"
+        },
+        "LambdaRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "s3:GetObject"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        {
+                                            "Fn::Join": [
+                                                "",
+                                                [
+                                                    "arn:aws:s3:::",
+                                                    {
+                                                        "Ref": "Bucket"
+                                                    },
+                                                    "/*"
+                                                ]
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "arn:aws:logs:*:*:*"
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "lambda:GetFunction"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "sns:publish"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        {
+                                            "Ref": "NotifcationTopic"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "iam:ListRolePolicies",
+                                        "iam:GetRolePolicy"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                }
+                            ]
+                        },
+                        "PolicyName": "LambdaCloudtrailPolicy"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "LambdaThrottlesAlarm": {
+            "Properties": {
+                "AlarmActions": [
+                    {
+                        "Ref": "NotifcationTopic"
+                    }
+                ],
+                "ComparisonOperator": "GreaterThanThreshold",
+                "Dimensions": [
+                    {
+                        "Name": "FunctionName",
+                        "Value": {
+                            "Ref": "LambdaFunction"
+                        }
+                    }
+                ],
+                "EvaluationPeriods": 1,
+                "MetricName": "Throttles",
+                "Namespace": "AWS/Lambda",
+                "Period": 300,
+                "Statistic": "Maximum",
+                "Threshold": "0"
+            },
+            "Type": "AWS::CloudWatch::Alarm"
+        },
+        "NotifcationTopic": {
+            "Properties": {
+                "DisplayName": "CloudTrail Monitor Alerts"
+            },
+            "Type": "AWS::SNS::Topic"
+        }
+    }
+}
