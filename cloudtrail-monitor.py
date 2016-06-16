@@ -39,8 +39,8 @@ def lambda_handler(event, context):
 
     for record in event['Records']:
         if 'Message' not in record['Sns']:
-            print("invalid record!")
             print(record)
+            raise Exception("Invalid record!")
 
         message = json.loads(record['Sns']['Message'])
 
