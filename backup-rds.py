@@ -1,12 +1,15 @@
 import boto3
 import operator
 
-ACCOUNT = 'xxxxx'
+aws_account = 'XXXX'
+source = 'us-east-1'
+destination = 'sa-east-1'
+databases = ['mysqldb01', 'pgdb01']
 
 
 def copy_latest_snapshot():
-    client = boto3.client('rds', 'eu-west-1')
-    frankfurt_client = boto3.client('rds', 'eu-central-1')
+    client = boto3.client('rds', source)
+    foreign_client = boto3.client('rds', destination)
 
     response = client.describe_db_snapshots(
         SnapshotType='automated',
@@ -18,8 +21,9 @@ def copy_latest_snapshot():
         raise Exception("No automated snapshots found")
 
     snapshots_per_project = {}
+
     for snapshot in response['DBSnapshots']:
-        if snapshot['Status'] != 'available':
+        if snapshot['DBInstanceIdentifier'] not in databases or snapshot['Status'] != 'available' :
             continue
 
         if snapshot['DBInstanceIdentifier'] not in snapshots_per_project.keys():
@@ -36,12 +40,12 @@ def copy_latest_snapshot():
         print("Checking if " + copy_name + " is copied")
 
         try:
-            frankfurt_client.describe_db_snapshots(
+            foreign_client.describe_db_snapshots(
                 DBSnapshotIdentifier=copy_name
             )
         except:
-            response = frankfurt_client.copy_db_snapshot(
-                SourceDBSnapshotIdentifier='arn:aws:rds:eu-west-1:' + ACCOUNT + ':snapshot:' + sorted_list[0][0],
+            response = foreign_client.copy_db_snapshot(
+                SourceDBSnapshotIdentifier='arn:aws:rds:' + source + ':' + aws_account + ':snapshot:' + sorted_list[0][0],
                 TargetDBSnapshotIdentifier=copy_name,
                 CopyTags=True
             )
@@ -56,19 +60,19 @@ def copy_latest_snapshot():
 
 
 def remove_old_snapshots():
-    client = boto3.client('rds', 'eu-west-1')
-    frankfurt_client = boto3.client('rds', 'eu-central-1')
+    client = boto3.client('rds', source)
+    foreign_client = boto3.client('rds', destination)
 
-    response = frankfurt_client.describe_db_snapshots(
+    response = foreign_client.describe_db_snapshots(
         SnapshotType='manual'
     )
 
     if len(response['DBSnapshots']) == 0:
-        raise Exception("No manual snapshots in Frankfurt found")
+        raise Exception("No manual snapshots in "+ destination + " found")
 
     snapshots_per_project = {}
     for snapshot in response['DBSnapshots']:
-        if snapshot['Status'] != 'available':
+        if snapshot['DBInstanceIdentifier'] not in databases or snapshot['Status'] != 'available' :
             continue
 
         if snapshot['DBInstanceIdentifier'] not in snapshots_per_project.keys():
@@ -84,10 +88,9 @@ def remove_old_snapshots():
 
             for snapshot in to_remove:
                 print("Removing " + snapshot)
-                frankfurt_client.delete_db_snapshot(
+                foreign_client.delete_db_snapshot(
                     DBSnapshotIdentifier=snapshot
                 )
-
 
 def lambda_handler(event, context):
     copy_latest_snapshot()
