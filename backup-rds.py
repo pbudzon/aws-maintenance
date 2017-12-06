@@ -4,8 +4,18 @@ import operator
 aws_account = 'XXXX'
 source = 'us-east-1'
 destination = 'sa-east-1'
-databases = ['mysqldb01', 'pgdb01']
 
+def getDBs():
+    rdsclient = boto3.client('rds', source)
+
+    databases = rdsclient.describe_db_instances()
+    DBArray=[]
+    for database in databases['DBInstances']:
+        DBArray.append(database['DBInstanceIdentifier'])
+
+    return DBArray
+
+databases = getDBs()
 
 def copy_latest_snapshot():
     client = boto3.client('rds', source)
