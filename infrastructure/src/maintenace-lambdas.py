@@ -56,44 +56,6 @@ ec_images_role = t.add_resource(Role(
     )]
 ))
 
-backup_rds_role = t.add_resource(Role(
-    "LambdaBackupRDSRole",
-    AssumeRolePolicyDocument=Policy(
-        Statement=[
-            Statement(
-                Effect=Allow, Action=[AssumeRole],
-                Principal=Principal(
-                    "Service", ["lambda.amazonaws.com"]
-                )
-            )
-        ]
-    ),
-    Policies=[IAMPolicy(
-        "LambdaBackupRDSPolicy",
-        PolicyName="LambdaCleanBaseImagesPolicy",
-        PolicyDocument=Policy(Statement=[
-            Statement(
-                Effect=Allow,
-                Action=[
-                    Action('rds', 'DescribeDbSnapshots'),
-                    Action('rds', 'CopyDbSnapshot'),
-                    Action('rds', 'DeleteDbSnapshot'),
-                ],
-                Resource=['*']
-            ),
-            Statement(
-                Effect=Allow,
-                Action=[
-                    Action('logs', 'CreateLogGroup'),
-                    Action('logs', 'CreateLogStream'),
-                    Action('logs', 'PutLogEvents'),
-                ],
-                Resource=['arn:aws:logs:*:*:*']
-            )
-        ])
-    )]
-))
-
 es_exec_role = t.add_resource(Role(
     "LambdaESExecRole",
     AssumeRolePolicyDocument=Policy(
@@ -170,26 +132,6 @@ release_function = t.add_resource(Function(
     Timeout=10
 ))
 
-source_file = os.path.realpath(__file__ + '/../../../backup-rds.py')
-with open(source_file, 'r') as content_file:
-    content = content_file.read()
-
-if len(content) > 4096:
-    raise Exception("Backup RDS function too long!")
-
-backup_rds_function = t.add_resource(Function(
-    'LambdaBackupRDSFunction',
-    Description='Copies RDS backups to Frankfurt',
-    Code=Code(
-        ZipFile=content
-    ),
-    Handler='index.lambda_handler',
-    MemorySize=128,
-    Role=GetAtt(backup_rds_role, 'Arn'),
-    Runtime='python2.7',
-    Timeout=10
-))
-
 source_file = os.path.realpath(__file__ + '/../../../clean-es-indices.py')
 with open(source_file, 'r') as content_file:
     content = content_file.read()
@@ -255,42 +197,6 @@ t.add_resource(Alarm(
 ))
 
 t.add_resource(Alarm(
-    "LambdaBackupRDSErrorsAlarm",
-    ComparisonOperator='GreaterThanThreshold',
-    EvaluationPeriods=1,
-    MetricName='Errors',
-    Namespace='AWS/Lambda',
-    Dimensions=[
-        MetricDimension(
-            Name='FunctionName',
-            Value=Ref(backup_rds_function)
-        )
-    ],
-    Period=300,
-    Statistic='Maximum',
-    Threshold='0',
-    AlarmActions=[Ref(alarm_topic)]
-))
-
-t.add_resource(Alarm(
-    "LambdaBackupRDSThrottlesAlarm",
-    ComparisonOperator='GreaterThanThreshold',
-    EvaluationPeriods=1,
-    MetricName='Throttles',
-    Namespace='AWS/Lambda',
-    Dimensions=[
-        MetricDimension(
-            Name='FunctionName',
-            Value=Ref(backup_rds_function)
-        )
-    ],
-    Period=300,
-    Statistic='Maximum',
-    Threshold='0',
-    AlarmActions=[Ref(alarm_topic)]
-))
-
-t.add_resource(Alarm(
     "LambdaCleanESErrorsAlarm",
     ComparisonOperator='GreaterThanThreshold',
     EvaluationPeriods=1,
@@ -326,4 +232,4 @@ t.add_resource(Alarm(
     AlarmActions=[Ref(alarm_topic)]
 ))
 
-print t.to_json()
+print(t.to_json())

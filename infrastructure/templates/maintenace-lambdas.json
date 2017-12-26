@@ -2,132 +2,12 @@
     "Description": "Stack with Lambda function performing maintenance tasks",
     "Parameters": {
         "AlarmEmail": {
-            "Default": "cnidevteam@condenastint.com",
+            "Default": "contact@example.com",
             "Description": "Email where Lambda errors alarms should be sent to",
             "Type": "String"
         }
     },
     "Resources": {
-        "LambdaBackupRDSErrorsAlarm": {
-            "Properties": {
-                "AlarmActions": [
-                    {
-                        "Ref": "LambdaErrorTopic"
-                    }
-                ],
-                "ComparisonOperator": "GreaterThanThreshold",
-                "Dimensions": [
-                    {
-                        "Name": "FunctionName",
-                        "Value": {
-                            "Ref": "LambdaBackupRDSFunction"
-                        }
-                    }
-                ],
-                "EvaluationPeriods": 1,
-                "MetricName": "Errors",
-                "Namespace": "AWS/Lambda",
-                "Period": 300,
-                "Statistic": "Maximum",
-                "Threshold": "0"
-            },
-            "Type": "AWS::CloudWatch::Alarm"
-        },
-        "LambdaBackupRDSFunction": {
-            "Properties": {
-                "Code": {
-                    "ZipFile": "import boto3\nimport operator\n\n\ndef copy_latest_snapshot():\n    client = boto3.client('rds', 'eu-west-1')\n    frankfurt_client = boto3.client('rds', 'eu-central-1')\n\n    response = client.describe_db_snapshots(\n        SnapshotType='automated',\n        IncludeShared=False,\n        IncludePublic=False\n    )\n\n    if len(response['DBSnapshots']) == 0:\n        raise Exception(\"No automated snapshots found\")\n\n    snapshots_per_project = {}\n    for snapshot in response['DBSnapshots']:\n        if snapshot['Status'] != 'available':\n            continue\n\n        if snapshot['DBInstanceIdentifier'] not in snapshots_per_project.keys():\n            snapshots_per_project[snapshot['DBInstanceIdentifier']] = {}\n\n        snapshots_per_project[snapshot['DBInstanceIdentifier']][snapshot['DBSnapshotIdentifier']] = snapshot[\n            'SnapshotCreateTime']\n\n    for project in snapshots_per_project:\n        sorted_list = sorted(snapshots_per_project[project].items(), key=operator.itemgetter(1), reverse=True)\n\n        copy_name = project + \"-\" + sorted_list[0][1].strftime(\"%Y-%m-%d\")\n\n        print(\"Checking if \" + copy_name + \" is copied\")\n\n        try:\n            frankfurt_client.describe_db_snapshots(\n                DBSnapshotIdentifier=copy_name\n            )\n        except:\n            response = frankfurt_client.copy_db_snapshot(\n                SourceDBSnapshotIdentifier='arn:aws:rds:eu-west-1:800540593336:snapshot:' + sorted_list[0][0],\n                TargetDBSnapshotIdentifier=copy_name,\n                CopyTags=True\n            )\n\n            if response['DBSnapshot']['Status'] != \"pending\" and response['DBSnapshot']['Status'] != \"available\":\n                raise Exception(\"Copy operation for \" + copy_name + \" failed!\")\n            print(\"Copied \" + copy_name)\n\n            continue\n\n        print(\"Already copied\")\n\n\ndef remove_old_snapshots():\n    client = boto3.client('rds', 'eu-west-1')\n    frankfurt_client = boto3.client('rds', 'eu-central-1')\n\n    response = frankfurt_client.describe_db_snapshots(\n        SnapshotType='manual'\n    )\n\n    if len(response['DBSnapshots']) == 0:\n        raise Exception(\"No manual snapshots in Frankfurt found\")\n\n    snapshots_per_project = {}\n    for snapshot in response['DBSnapshots']:\n        if snapshot['Status'] != 'available':\n            continue\n\n        if snapshot['DBInstanceIdentifier'] not in snapshots_per_project.keys():\n            snapshots_per_project[snapshot['DBInstanceIdentifier']] = {}\n\n        snapshots_per_project[snapshot['DBInstanceIdentifier']][snapshot['DBSnapshotIdentifier']] = snapshot[\n            'SnapshotCreateTime']\n\n    for project in snapshots_per_project:\n        if len(snapshots_per_project[project]) > 1:\n            sorted_list = sorted(snapshots_per_project[project].items(), key=operator.itemgetter(1), reverse=True)\n            to_remove = [i[0] for i in sorted_list[1:]]\n\n            for snapshot in to_remove:\n                print(\"Removing \" + snapshot)\n                frankfurt_client.delete_db_snapshot(\n                    DBSnapshotIdentifier=snapshot\n                )\n\n\ndef lambda_handler(event, context):\n    copy_latest_snapshot()\n    remove_old_snapshots()\n\n\nif __name__ == '__main__':\n    lambda_handler(None, None)\n"
-                },
-                "Description": "Copies RDS backups to Frankfurt",
-                "Handler": "index.lambda_handler",
-                "MemorySize": 128,
-                "Role": {
-                    "Fn::GetAtt": [
-                        "LambdaBackupRDSRole",
-                        "Arn"
-                    ]
-                },
-                "Runtime": "python2.7",
-                "Timeout": 10
-            },
-            "Type": "AWS::Lambda::Function"
-        },
-        "LambdaBackupRDSRole": {
-            "Properties": {
-                "AssumeRolePolicyDocument": {
-                    "Statement": [
-                        {
-                            "Action": [
-                                "sts:AssumeRole"
-                            ],
-                            "Effect": "Allow",
-                            "Principal": {
-                                "Service": [
-                                    "lambda.amazonaws.com"
-                                ]
-                            }
-                        }
-                    ]
-                },
-                "Policies": [
-                    {
-                        "PolicyDocument": {
-                            "Statement": [
-                                {
-                                    "Action": [
-                                        "rds:DescribeDbSnapshots",
-                                        "rds:CopyDbSnapshot",
-                                        "rds:DeleteDbSnapshot"
-                                    ],
-                                    "Effect": "Allow",
-                                    "Resource": [
-                                        "*"
-                                    ]
-                                },
-                                {
-                                    "Action": [
-                                        "logs:CreateLogGroup",
-                                        "logs:CreateLogStream",
-                                        "logs:PutLogEvents"
-                                    ],
-                                    "Effect": "Allow",
-                                    "Resource": [
-                                        "arn:aws:logs:*:*:*"
-                                    ]
-                                }
-                            ]
-                        },
-                        "PolicyName": "LambdaCleanBaseImagesPolicy"
-                    }
-                ]
-            },
-            "Type": "AWS::IAM::Role"
-        },
-        "LambdaBackupRDSThrottlesAlarm": {
-            "Properties": {
-                "AlarmActions": [
-                    {
-                        "Ref": "LambdaErrorTopic"
-                    }
-                ],
-                "ComparisonOperator": "GreaterThanThreshold",
-                "Dimensions": [
-                    {
-                        "Name": "FunctionName",
-                        "Value": {
-                            "Ref": "LambdaBackupRDSFunction"
-                        }
-                    }
-                ],
-                "EvaluationPeriods": 1,
-                "MetricName": "Throttles",
-                "Namespace": "AWS/Lambda",
-                "Period": 300,
-                "Statistic": "Maximum",
-                "Threshold": "0"
-            },
-            "Type": "AWS::CloudWatch::Alarm"
-        },
         "LambdaBaseErrorsAlarm": {
             "Properties": {
                 "AlarmActions": [
@@ -225,7 +105,7 @@
         "LambdaCleanESFunction": {
             "Properties": {
                 "Code": {
-                    "ZipFile": "import sys, os, datetime, hashlib, hmac, urllib2, json\n\nENDPOINTS_ACCOUNTS = {\n    'account-1': 'elastic-search-endpoint',\n    'account-2': 'elastic-search-endpoint',\n}\n\nTHRESHOLD_ACCOUNTS = {\n    'account-1': 20,\n    'account-2': 60\n}\n\n\ndef sign(key, msg):\n    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()\n\n\ndef getSignatureKey(key, dateStamp, regionName, serviceName):\n    kDate = sign(('AWS4' + key).encode('utf-8'), dateStamp)\n    kRegion = sign(kDate, regionName)\n    kService = sign(kRegion, serviceName)\n    kSigning = sign(kService, 'aws4_request')\n    return kSigning\n\n\ndef get_signature(endpoint, method, canonical_uri):\n    region = 'eu-west-1'\n    service = 'es'\n    access_key = os.environ.get('AWS_ACCESS_KEY_ID')\n    secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')\n    session_key = os.environ.get('AWS_SESSION_TOKEN')\n    t = datetime.datetime.utcnow()\n    amzdate = t.strftime('%Y%m%dT%H%M%SZ')\n    datestamp = t.strftime('%Y%m%d')\n    canonical_querystring = ''\n    canonical_headers = 'host:' + endpoint + '\\nx-amz-date:' + amzdate + '\\nx-amz-security-token:' + session_key + \"\\n\"\n    signed_headers = 'host;x-amz-date;x-amz-security-token'\n    payload_hash = hashlib.sha256('').hexdigest()\n    canonical_request = method + '\\n' + canonical_uri + '\\n' + canonical_querystring + '\\n' + canonical_headers + '\\n' + signed_headers + '\\n' + payload_hash\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = datestamp + '/' + region + '/' + service + '/' + 'aws4_request'\n    string_to_sign = algorithm + '\\n' + amzdate + '\\n' + credential_scope + '\\n' + hashlib.sha256(\n        canonical_request).hexdigest()\n    signing_key = getSignatureKey(secret_key, datestamp, region, service)\n    signature = hmac.new(signing_key, (string_to_sign).encode('utf-8'), hashlib.sha256).hexdigest()\n    authorization_header = algorithm + ' ' + 'Credential=' + access_key + '/' + credential_scope + ', ' + 'SignedHeaders=' + signed_headers + ', ' + 'Signature=' + signature\n    headers = {'x-amz-date': amzdate, 'x-amz-security-token': session_key, 'Authorization': authorization_header}\n    request_url = 'https://' + endpoint + canonical_uri + '?' + canonical_querystring\n\n    return {'url': request_url, 'headers': headers}\n\n\ndef lambda_handler(event, context):\n    INDEXPREFIX = 'cwl-'\n\n    if 'account' in event:\n        if event['account'] not in ENDPOINTS_ACCOUNTS.keys():\n            raise Exception(\"No endpoint configured for account \" + str(event['account']))\n        ENDPOINT = ENDPOINTS_ACCOUNTS[event['account']]\n        TOLEAVE = THRESHOLD_ACCOUNTS[event['account']]\n    else:\n        raise Exception(\"No account specified in event\")\n\n    response = json.loads(get_index_list(ENDPOINT))\n    indexes = []\n    for index in response:\n        if index.startswith(INDEXPREFIX):\n            indexes.append(index)\n\n    indexes.sort(reverse=True)\n    to_remove = indexes[TOLEAVE:]\n    for index in to_remove:\n        print(\"Removing \" + index)\n        delete_index(ENDPOINT, index)\n\n\ndef delete_index(endpoint, index):\n    info = get_signature(endpoint, 'DELETE', '/' + index)\n\n    opener = urllib2.build_opener(urllib2.HTTPHandler)\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    request.get_method = lambda: 'DELETE'\n\n    r = opener.open(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n\ndef get_index_list(endpoint):\n    info = get_signature(endpoint, 'GET', '/_aliases')\n\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    r = urllib2.urlopen(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n    return r.read()\n\n\nif __name__ == '__main__':\n    lambda_handler({'account': '678957977264'}, None)\n"
+                    "ZipFile": "import os\nimport datetime\nimport hashlib\nimport hmac\nimport urllib2\nimport json\n\nENDPOINTS_ACCOUNTS = {\n    'account-1': 'elastic-search-endpoint',\n    'account-2': 'elastic-search-endpoint',\n}\n\nTHRESHOLD_ACCOUNTS = {\n    'account-1': 20,\n    'account-2': 60\n}\n\n\ndef sign(key, msg):\n    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()\n\n\ndef getSignatureKey(key, dateStamp, regionName, serviceName):\n    kDate = sign(('AWS4' + key).encode('utf-8'), dateStamp)\n    kRegion = sign(kDate, regionName)\n    kService = sign(kRegion, serviceName)\n    kSigning = sign(kService, 'aws4_request')\n    return kSigning\n\n\ndef get_signature(endpoint, method, canonical_uri):\n    region = 'eu-west-1'\n    service = 'es'\n    access_key = os.environ.get('AWS_ACCESS_KEY_ID')\n    secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')\n    session_key = os.environ.get('AWS_SESSION_TOKEN')\n    t = datetime.datetime.utcnow()\n    amzdate = t.strftime('%Y%m%dT%H%M%SZ')\n    datestamp = t.strftime('%Y%m%d')\n    canonical_querystring = ''\n    canonical_headers = 'host:' + endpoint + '\\nx-amz-date:' + amzdate + '\\nx-amz-security-token:' + session_key + \"\\n\"\n    signed_headers = 'host;x-amz-date;x-amz-security-token'\n    payload_hash = hashlib.sha256('').hexdigest()\n    canonical_request = method + '\\n' + canonical_uri + '\\n' + canonical_querystring + '\\n' + canonical_headers + '\\n' + signed_headers + '\\n' + payload_hash\n    algorithm = 'AWS4-HMAC-SHA256'\n    credential_scope = datestamp + '/' + region + '/' + service + '/' + 'aws4_request'\n    string_to_sign = algorithm + '\\n' + amzdate + '\\n' + credential_scope + '\\n' + hashlib.sha256(\n        canonical_request).hexdigest()\n    signing_key = getSignatureKey(secret_key, datestamp, region, service)\n    signature = hmac.new(signing_key, (string_to_sign).encode('utf-8'), hashlib.sha256).hexdigest()\n    authorization_header = algorithm + ' ' + 'Credential=' + access_key + '/' + credential_scope + ', ' + 'SignedHeaders=' + signed_headers + ', ' + 'Signature=' + signature\n    headers = {'x-amz-date': amzdate, 'x-amz-security-token': session_key, 'Authorization': authorization_header}\n    request_url = 'https://' + endpoint + canonical_uri + '?' + canonical_querystring\n\n    return {'url': request_url, 'headers': headers}\n\n\ndef lambda_handler(event, context):\n    INDEXPREFIX = 'cwl-'\n\n    if 'account' in event:\n        if event['account'] not in ENDPOINTS_ACCOUNTS.keys():\n            raise Exception(\"No endpoint configured for account \" + str(event['account']))\n        ENDPOINT = ENDPOINTS_ACCOUNTS[event['account']]\n        TOLEAVE = THRESHOLD_ACCOUNTS[event['account']]\n    else:\n        raise Exception(\"No account specified in event\")\n\n    response = json.loads(get_index_list(ENDPOINT))\n    indexes = []\n    for index in response:\n        if index.startswith(INDEXPREFIX):\n            indexes.append(index)\n\n    indexes.sort(reverse=True)\n    to_remove = indexes[TOLEAVE:]\n    for index in to_remove:\n        print(\"Removing \" + index)\n        delete_index(ENDPOINT, index)\n\n\ndef delete_index(endpoint, index):\n    info = get_signature(endpoint, 'DELETE', '/' + index)\n\n    opener = urllib2.build_opener(urllib2.HTTPHandler)\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    request.get_method = lambda: 'DELETE'\n\n    r = opener.open(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n\ndef get_index_list(endpoint):\n    info = get_signature(endpoint, 'GET', '/_aliases')\n\n    request = urllib2.Request(info['url'], headers=info['headers'])\n    r = urllib2.urlopen(request)\n    if r.getcode() != 200:\n        raise Exception(\"Non 200 response when calling, got: \" + str(r.getcode()))\n\n    return r.read()\n\n\nif __name__ == '__main__':\n    lambda_handler({'account': 'account-1'}, None)\n"
                 },
                 "Description": "Removes old ElasticSearch indexes",
                 "Handler": "index.lambda_handler",
@@ -381,7 +261,7 @@
         "LambdaReleaseFunction": {
             "Properties": {
                 "Code": {
-                    "ZipFile": "from __future__ import print_function\nimport boto3\nimport operator\n\n\ndef clean_images(region, limit):\n    client = boto3.client('ec2', region)\n\n    response = client.describe_images(\n        Owners=['self'],\n        Filters=[{'Name': 'tag:Type', 'Values': ['ReleaseImage']}]\n    )\n\n    if len(response['Images']) == 0:\n        raise Exception('no AMIs with Type=BaseImage tag found')\n\n    images = {}\n    for image in response['Images']:\n        for tag in image['Tags']:\n            if tag['Key'] == \"Project\":\n                if tag['Value'] not in images.keys():\n                    images[tag['Value']] = {}\n                images[tag['Value']][image['ImageId']] = image['CreationDate']\n                break\n\n    to_remove = [];\n    for project in images:\n        sorted_x = sorted(images[project].items(), key=operator.itemgetter(1), reverse=True)\n        if len(sorted_x) > limit:\n            to_remove = to_remove + [i[0] for i in sorted_x[limit:]]\n\n    if len(to_remove) == 0:\n        print(\"Nothing to do\")\n        return 0\n\n    print(\"Will remove \" + str(len(to_remove)) + \" images\")\n\n    for ami in to_remove:\n        print(\"Removing: \" + ami)\n        client.deregister_image(ImageId=ami)\n\n\ndef lambda_handler(event, context):\n    clean_images('eu-west-1', 50)\n    clean_images('eu-central-1', 1)\n\n\nif __name__ == '__main__':\n    lambda_handler(None, None)\n"
+                    "ZipFile": "import boto3\nimport operator\n\n\ndef clean_images(region, limit):\n    client = boto3.client('ec2', region)\n\n    response = client.describe_images(\n        Owners=['self'],\n        Filters=[{'Name': 'tag:Type', 'Values': ['ReleaseImage']}]\n    )\n\n    if len(response['Images']) == 0:\n        raise Exception('no AMIs with Type=BaseImage tag found')\n\n    images = {}\n    for image in response['Images']:\n        for tag in image['Tags']:\n            if tag['Key'] == \"Project\":\n                if tag['Value'] not in images.keys():\n                    images[tag['Value']] = {}\n                images[tag['Value']][image['ImageId']] = image['CreationDate']\n                break\n\n    to_remove = [];\n    for project in images:\n        sorted_x = sorted(images[project].items(), key=operator.itemgetter(1), reverse=True)\n        if len(sorted_x) > limit:\n            to_remove = to_remove + [i[0] for i in sorted_x[limit:]]\n\n    if len(to_remove) == 0:\n        print(\"Nothing to do\")\n        return 0\n\n    print(\"Will remove \" + str(len(to_remove)) + \" images\")\n\n    for ami in to_remove:\n        print(\"Removing: \" + ami)\n        client.deregister_image(ImageId=ami)\n\n\ndef lambda_handler(event, context):\n    clean_images('eu-west-1', 50)\n    clean_images('eu-central-1', 1)\n\n\nif __name__ == '__main__':\n    lambda_handler(None, None)\n"
                 },
                 "Description": "Clears Release AMI images",
                 "Handler": "index.lambda_handler",

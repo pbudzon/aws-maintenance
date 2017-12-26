@@ -1,101 +1,103 @@
 import boto3
+import botocore
 import operator
+import json
+import os
 
-aws_account = 'XXXX'
-source = 'us-east-1'
-destination = 'sa-east-1'
-databases = ['mysqldb01', 'pgdb01']
+SOURCE_REGION = os.environ.get('SOURCE_REGION')
+TARGET_REGION = os.environ.get('TARGET_REGION')
+SOURCE_CLIENT = boto3.client('rds', SOURCE_REGION)
+TARGET_CLIENT = boto3.client('rds', TARGET_REGION)
 
 
-def copy_latest_snapshot():
-    client = boto3.client('rds', source)
-    foreign_client = boto3.client('rds', destination)
-
-    response = client.describe_db_snapshots(
-        SnapshotType='automated',
-        IncludeShared=False,
-        IncludePublic=False
+def copy_latest_snapshot(account_id, instance_name):
+    # Get a list of automated snapshots for this database
+    response = SOURCE_CLIENT.describe_db_snapshots(
+        DBInstanceIdentifier=instance_name,
+        SnapshotType="automated"
     )
 
     if len(response['DBSnapshots']) == 0:
-        raise Exception("No automated snapshots found")
+        raise Exception("No automated snapshots found for database " + instance_name)
 
-    snapshots_per_project = {}
-
+    # Order the list of snapshots by creation time
+    snapshots = {}
     for snapshot in response['DBSnapshots']:
-        if snapshot['DBInstanceIdentifier'] not in databases or snapshot['Status'] != 'available' :
+        if snapshot['Status'] != 'available':
             continue
 
-        if snapshot['DBInstanceIdentifier'] not in snapshots_per_project.keys():
-            snapshots_per_project[snapshot['DBInstanceIdentifier']] = {}
+        snapshots[snapshot['DBSnapshotIdentifier']] = snapshot['SnapshotCreateTime']
 
-        snapshots_per_project[snapshot['DBInstanceIdentifier']][snapshot['DBSnapshotIdentifier']] = snapshot[
-            'SnapshotCreateTime']
+    # Get the latest snapshot
+    snapshot_name, snapshot_time = sorted(snapshots.items(), key=operator.itemgetter(1)).pop()
+    copy_name = "{}-{}-{}".format(instance_name, SOURCE_REGION, snapshot_name)
+    print("Latest snapshot found: '{}' from {}".format(snapshot_name, snapshot_time))
+    print("Checking if '{}' already exists in target region".format(copy_name))
 
-    for project in snapshots_per_project:
-        sorted_list = sorted(snapshots_per_project[project].items(), key=operator.itemgetter(1), reverse=True)
-
-        copy_name = project + "-" + sorted_list[0][1].strftime("%Y-%m-%d")
-
-        print("Checking if " + copy_name + " is copied")
-
-        try:
-            foreign_client.describe_db_snapshots(
-                DBSnapshotIdentifier=copy_name
-            )
-        except:
-            response = foreign_client.copy_db_snapshot(
-                SourceDBSnapshotIdentifier='arn:aws:rds:' + source + ':' + aws_account + ':snapshot:' + sorted_list[0][0],
+    # Look for the copy_name snapshot in target region
+    try:
+        TARGET_CLIENT.describe_db_snapshots(
+            DBSnapshotIdentifier=copy_name
+        )
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == "DBSnapshotNotFound":
+            source_snapshot_arn = "arn:aws:rds:{}:{}:snapshot:{}".format(SOURCE_REGION, account_id, snapshot_name)
+            response = TARGET_CLIENT.copy_db_snapshot(
+                SourceDBSnapshotIdentifier=source_snapshot_arn,
                 TargetDBSnapshotIdentifier=copy_name,
                 CopyTags=True
             )
 
-            if response['DBSnapshot']['Status'] != "pending" and response['DBSnapshot']['Status'] != "available":
-                raise Exception("Copy operation for " + copy_name + " failed!")
-            print("Copied " + copy_name)
+            # Check the status of the copy
+            if response['DBSnapshot']['Status'] not in ("pending", "available"):
+                raise Exception("Copy operation for {} failed!".format(copy_name))
 
-            continue
+            print("Successfully copied {} to {}", format(copy_name, TARGET_REGION))
+        else:
+            print("{} is already copied to {}".format(copy_name, TARGET_REGION))
 
-        print("Already copied")
 
-
-def remove_old_snapshots():
-    client = boto3.client('rds', source)
-    foreign_client = boto3.client('rds', destination)
-
-    response = foreign_client.describe_db_snapshots(
-        SnapshotType='manual'
+def remove_old_snapshots(instance_name):
+    # Get a list of all snapshots for this database in target region
+    response = TARGET_CLIENT.describe_db_snapshots(
+        SnapshotType='manual',
+        DBInstanceIdentifier=instance_name
     )
 
     if len(response['DBSnapshots']) == 0:
-        raise Exception("No manual snapshots in "+ destination + " found")
+        raise Exception("No snapshots for database {} found in target region".format(instance_name))
 
-    snapshots_per_project = {}
+    # List the snapshots by time created
+    snapshots = {}
     for snapshot in response['DBSnapshots']:
-        if snapshot['DBInstanceIdentifier'] not in databases or snapshot['Status'] != 'available' :
+        if snapshot['Status'] != 'available':
             continue
+        snapshots[snapshot['DBSnapshotIdentifier']] = snapshot['SnapshotCreateTime']
 
-        if snapshot['DBInstanceIdentifier'] not in snapshots_per_project.keys():
-            snapshots_per_project[snapshot['DBInstanceIdentifier']] = {}
+    # Sort snapshots by time and get all other than the latest one
+    if len(snapshots) > 1:
+        sorted_snapshots = sorted(snapshots.items(), key=operator.itemgetter(1), reverse=True)
+        snapshots_to_remove = [i[0] for i in sorted_snapshots[1:]]
+        print("Found {} snapshot(s) to remove".format(len(snapshots_to_remove)))
 
-        snapshots_per_project[snapshot['DBInstanceIdentifier']][snapshot['DBSnapshotIdentifier']] = snapshot[
-            'SnapshotCreateTime']
+        # Remove the snapshots
+        for snapshot in snapshots_to_remove:
+            print("Removing {}".format(snapshot))
+            TARGET_CLIENT.delete_db_snapshot(
+                DBSnapshotIdentifier=snapshot
+            )
+    else:
+        print("No old snapshots to remove in target region")
 
-    for project in snapshots_per_project:
-        if len(snapshots_per_project[project]) > 1:
-            sorted_list = sorted(snapshots_per_project[project].items(), key=operator.itemgetter(1), reverse=True)
-            to_remove = [i[0] for i in sorted_list[1:]]
-
-            for snapshot in to_remove:
-                print("Removing " + snapshot)
-                foreign_client.delete_db_snapshot(
-                    DBSnapshotIdentifier=snapshot
-                )
 
 def lambda_handler(event, context):
-    copy_latest_snapshot()
-    remove_old_snapshots()
+    account_id = context.invoked_function_arn.split(":")[4]
+    message = json.loads(event['Records'][0]['Sns']['Message'])
 
-
-if __name__ == '__main__':
-    lambda_handler(None, None)
+    # Check that event reports backup has finished
+    event_id = message['Event ID'].split("#")
+    if event_id[1] == 'RDS-EVENT-0002':
+        copy_latest_snapshot(account_id, message['Source ID'])
+        remove_old_snapshots(message['Source ID'])
+    else:
+        print("Skipping")

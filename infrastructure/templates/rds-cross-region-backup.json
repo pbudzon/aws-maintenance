@@ -1,0 +1,205 @@
+{
+    "Conditions": {
+        "UseAllDatabases": {
+            "Fn::Equals": [
+                {
+                    "Fn::Join": [
+                        "",
+                        {
+                            "Ref": "DatabasesToUse"
+                        }
+                    ]
+                },
+                ""
+            ]
+        }
+    },
+    "Description": "Resources copying RDS backups to another region",
+    "Metadata": {
+        "AWS::CloudFormation::Interface": {
+            "ParameterGroups": [
+                {
+                    "Label": {
+                        "default": "Regions configuration"
+                    },
+                    "Parameters": [
+                        "SourceRegionParameter",
+                        "TargetRegionParameter"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Optional: limit to specific RDS database(s)"
+                    },
+                    "Parameters": [
+                        "DatabasesToUse"
+                    ]
+                }
+            ],
+            "ParameterLabels": {
+                "DatabasesToUse": {
+                    "default": "Databases to use for"
+                },
+                "SourceRegionParameter": {
+                    "default": "Source region"
+                },
+                "TargetRegionParameter": {
+                    "default": "Target region"
+                }
+            }
+        }
+    },
+    "Parameters": {
+        "DatabasesToUse": {
+            "Description": "Optional: comma-delimited list of RDS instance names to use. Leave empty to use for all instances in source region.",
+            "Type": "CommaDelimitedList"
+        },
+        "SourceRegionParameter": {
+            "AllowedPattern": "^[a-z]+-[a-z]+-[0-9]+$",
+            "ConstraintDescription": "The source region needs to be valid AWS region, for example: us-east-1",
+            "Description": "Region where your RDS database resides in (for example: eu-west-1)",
+            "Type": "String"
+        },
+        "TargetRegionParameter": {
+            "AllowedPattern": "^[a-z]+-[a-z]+-[0-9]+$",
+            "ConstraintDescription": "The target region needs to be valid AWS region, for example: us-east-1",
+            "Description": "Region where to store the copies of snapshots (for example: eu-central-1)",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "LambdaBackupRDSFunction": {
+            "Properties": {
+                "Code": {
+                    "ZipFile": "import boto3\nimport botocore\nimport operator\nimport json\nimport os\n\nSOURCE_REGION = os.environ.get('SOURCE_REGION')\nTARGET_REGION = os.environ.get('TARGET_REGION')\nSOURCE_CLIENT = boto3.client('rds', SOURCE_REGION)\nTARGET_CLIENT = boto3.client('rds', TARGET_REGION)\n\n\ndef copy_latest_snapshot(account_id, instance_name):\n    # Get a list of automated snapshots for this database\n    response = SOURCE_CLIENT.describe_db_snapshots(\n        DBInstanceIdentifier=instance_name,\n        SnapshotType=\"automated\"\n    )\n\n    if len(response['DBSnapshots']) == 0:\n        raise Exception(\"No automated snapshots found for database \" + instance_name)\n\n    # Order the list of snapshots by creation time\n    snapshots = {}\n    for snapshot in response['DBSnapshots']:\n        if snapshot['Status'] != 'available':\n            continue\n\n        snapshots[snapshot['DBSnapshotIdentifier']] = snapshot['SnapshotCreateTime']\n\n    # Get the latest snapshot\n    snapshot_name, snapshot_time = sorted(snapshots.items(), key=operator.itemgetter(1)).pop()\n    copy_name = \"{}-{}-{}\".format(instance_name, SOURCE_REGION, snapshot_name)\n    print(\"Latest snapshot found: '{}' from {}\".format(snapshot_name, snapshot_time))\n    print(\"Checking if '{}' already exists in target region\".format(copy_name))\n\n    # Look for the copy_name snapshot in target region\n    try:\n        TARGET_CLIENT.describe_db_snapshots(\n            DBSnapshotIdentifier=copy_name\n        )\n    except botocore.exceptions.ClientError as e:\n        if e.response['Error']['Code'] == \"DBSnapshotNotFound\":\n            source_snapshot_arn = \"arn:aws:rds:{}:{}:snapshot:{}\".format(SOURCE_REGION, account_id, snapshot_name)\n            response = TARGET_CLIENT.copy_db_snapshot(\n                SourceDBSnapshotIdentifier=source_snapshot_arn,\n                TargetDBSnapshotIdentifier=copy_name,\n                CopyTags=True\n            )\n\n            # Check the status of the copy\n            if response['DBSnapshot']['Status'] not in (\"pending\", \"available\"):\n                raise Exception(\"Copy operation for {} failed!\".format(copy_name))\n\n            print(\"Successfully copied {} to {}\", format(copy_name, TARGET_REGION))\n        else:\n            print(\"{} is already copied to {}\".format(copy_name, TARGET_REGION))\n\n\ndef remove_old_snapshots(instance_name):\n    # Get a list of all snapshots for this database in target region\n    response = TARGET_CLIENT.describe_db_snapshots(\n        SnapshotType='manual',\n        DBInstanceIdentifier=instance_name\n    )\n\n    if len(response['DBSnapshots']) == 0:\n        raise Exception(\"No snapshots for database {} found in target region\".format(instance_name))\n\n    # List the snapshots by time created\n    snapshots = {}\n    for snapshot in response['DBSnapshots']:\n        if snapshot['Status'] != 'available':\n            continue\n        snapshots[snapshot['DBSnapshotIdentifier']] = snapshot['SnapshotCreateTime']\n\n    # Sort snapshots by time and get all other than the latest one\n    if len(snapshots) > 1:\n        sorted_snapshots = sorted(snapshots.items(), key=operator.itemgetter(1), reverse=True)\n        snapshots_to_remove = [i[0] for i in sorted_snapshots[1:]]\n        print(\"Found {} snapshot(s) to remove\".format(len(snapshots_to_remove)))\n\n        # Remove the snapshots\n        for snapshot in snapshots_to_remove:\n            print(\"Removing {}\".format(snapshot))\n            TARGET_CLIENT.delete_db_snapshot(\n                DBSnapshotIdentifier=snapshot\n            )\n    else:\n        print(\"No old snapshots to remove in target region\")\n\n\ndef lambda_handler(event, context):\n    account_id = context.invoked_function_arn.split(\":\")[4]\n    message = json.loads(event['Records'][0]['Sns']['Message'])\n\n    # Check that event reports backup has finished\n    event_id = message['Event ID'].split(\"#\")\n    if event_id[1] == 'RDS-EVENT-0002':\n        copy_latest_snapshot(account_id, message['Source ID'])\n        remove_old_snapshots(message['Source ID'])\n    else:\n        print(\"Skipping\")\n"
+                },
+                "Description": "Copies RDS backups to another region",
+                "Environment": {
+                    "Variables": {
+                        "SOURCE_REGION": {
+                            "Ref": "SourceRegionParameter"
+                        },
+                        "TARGET_REGION": {
+                            "Ref": "TargetRegionParameter"
+                        }
+                    }
+                },
+                "Handler": "index.lambda_handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaBackupRDSRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.6",
+                "Timeout": 10
+            },
+            "Type": "AWS::Lambda::Function"
+        },
+        "LambdaBackupRDSRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "rds:DescribeDbSnapshots",
+                                        "rds:CopyDbSnapshot",
+                                        "rds:DeleteDbSnapshot"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "arn:aws:logs:*:*:*"
+                                    ]
+                                }
+                            ]
+                        },
+                        "PolicyName": "AccessToRDSAndLogs"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "RDSBackupEvent": {
+            "Properties": {
+                "Enabled": "true",
+                "EventCategories": [
+                    "backup"
+                ],
+                "SnsTopicArn": {
+                    "Ref": "RDSBackupTopic"
+                },
+                "SourceIds": {
+                    "Fn::If": [
+                        "UseAllDatabases",
+                        {
+                            "Ref": "AWS::NoValue"
+                        },
+                        {
+                            "Ref": "DatabasesToUse"
+                        }
+                    ]
+                },
+                "SourceType": "db-instance"
+            },
+            "Type": "AWS::RDS::EventSubscription"
+        },
+        "RDSBackupTopic": {
+            "Properties": {
+                "Subscription": [
+                    {
+                        "Endpoint": {
+                            "Fn::GetAtt": [
+                                "LambdaBackupRDSFunction",
+                                "Arn"
+                            ]
+                        },
+                        "Protocol": "lambda"
+                    }
+                ]
+            },
+            "Type": "AWS::SNS::Topic"
+        },
+        "SNSPermissionForLambda": {
+            "Properties": {
+                "Action": "lambda:invokeFunction",
+                "FunctionName": {
+                    "Ref": "LambdaBackupRDSFunction"
+                },
+                "Principal": "sns.amazonaws.com",
+                "SourceArn": {
+                    "Ref": "RDSBackupTopic"
+                }
+            },
+            "Type": "AWS::Lambda::Permission"
+        }
+    }
+}

@@ -1,18 +1,39 @@
 # aws-maintenance
-Collection of scripts and lambda functions used for maintaining AWS
+Collection of scripts and Lambda functions used for maintaining various AWS resources.
 
-## cloudtrail-monitor.py
+## Cross-region RDS backups (backup-rds.py)
 
-Lambda function which monitors CloudTrail logs and sends SNS notification on `LaunchInstances` event. This can be modified to look for and respond to any AWS API calls as needed.
+Lambda function used to copy RDS snapshot from one region to another, to allow for the database to be restored in case of region failure.
+One (latest) copy for each RDS instance is kept in the target region.
 
-Use `infrastructure/templates/cloudtrail-notifications.json` CloudFormation template to create the Lambda, CloudTrail and SNS topics. In the Outputs of the CloudFormation
+Use `infrastructure/templates/rds-cross-region-backup.json` CloudFormation template to create the Lambda and all resources it needs.
+It will create a subscription from RDS to Lambda, whenever an automated RDS snapshot is made - that snapshot will be copied to
+target region and all older snapshots for that database will be removed.
+
+You will be asked to specify the source and target regions to use by Lambda when creating the CloudFormation stack.
+
+You can also limit the function to only act for specific databases - specify the list of names in the "Databases to use for"
+parameter when creating the CloudFormation stack. If you leave it empty, Lambda will trigger for all RDS instances within
+the source region.
+
+
+## Monitor CloudTrail events (cloudtrail-monitor.py)
+
+Lambda function which monitors CloudTrail logs and sends SNS notification on `LaunchInstances` event. 
+This can be modified to look for and respond to any AWS API calls as needed.
+
+Use `infrastructure/templates/cloudtrail-notifications.json` CloudFormation template to create the Lambda,
+ CloudTrail and SNS topics. In the Outputs of the CloudFormation
 stack, you'll find the SNS topic to which you can subscribe to receive the notifications.
 
-## backup-rds.py
 
-Lambda function used to copy RDS snapshot from eu-west-1 (Ireland) to eu-central-1 (Frankfurt). One (latest) copy for each RDS instance is kept in Frankfurt.
+## Other Lambdas
 
-## clean-base-images.py and clean-release-images.py
+The Lambdas below can be created by using `infrastructure/templates/maintenance-lambdas.json` CloudFormation template.
+
+You should probably review (and adjust) them to your needs as necessary. They are provided as examples.
+
+### clean-base-images.py and clean-release-images.py
 
 Remove AMIs from eu-west-1 (Ireland) to eu-central-1 (Frankfurt) based on different tags.
 
@@ -26,7 +47,7 @@ Assumptions:
 
 Those scripts make sure only a certain amount of recent images for each project is stored to limit the costs.
 
-## clean-es-indices.py
+### clean-es-indices.py
 
 Removes old CloudWatch indices inside AWS ElasticSearch Service. Useful when using CloudWatch log streaming into ElasticSearch.
 
