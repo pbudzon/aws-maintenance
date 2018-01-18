@@ -30,9 +30,9 @@ def copy_latest_snapshot(account_id, instance_name):
 
     # Get the latest snapshot
     snapshot_name, snapshot_time = sorted(snapshots.items(), key=operator.itemgetter(1)).pop()
-    copy_name = "{}-{}-{}".format(instance_name, SOURCE_REGION, snapshot_name)
     print("Latest snapshot found: '{}' from {}".format(snapshot_name, snapshot_time))
-    print("Checking if '{}' already exists in target region".format(copy_name))
+    copy_name = "{}-{}-{}".format(instance_name, SOURCE_REGION, snapshot_name.replace(":", "-"))
+    print("Checking if '{}' exists in target region".format(copy_name))
 
     # Look for the copy_name snapshot in target region
     try:
@@ -52,9 +52,12 @@ def copy_latest_snapshot(account_id, instance_name):
             if response['DBSnapshot']['Status'] not in ("pending", "available"):
                 raise Exception("Copy operation for {} failed!".format(copy_name))
 
-            print("Successfully copied {} to {}", format(copy_name, TARGET_REGION))
-        else:
-            print("{} is already copied to {}".format(copy_name, TARGET_REGION))
+            print("Copied {} to {}".format(copy_name, TARGET_REGION))
+            return
+        else:  # another error happened
+            raise e
+
+    print("{} is already copied to {}".format(copy_name, TARGET_REGION))
 
 
 def remove_old_snapshots(instance_name):
