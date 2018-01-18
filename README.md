@@ -7,10 +7,11 @@ Lambda function used to copy RDS snapshot from one region to another, to allow f
 One (latest) copy for each RDS instance is kept in the target region.
 
 Use `infrastructure/templates/rds-cross-region-backup.json` CloudFormation template to create the Lambda and all resources it needs.
-It will create a subscription from RDS to Lambda, whenever an automated RDS snapshot is made - that snapshot will be copied to
-target region and all older snapshots for that database will be removed.
+It will create a subscription from RDS to Lambda, whenever an automated RDS snapshot on any database in that AWS region 
+is made - that snapshot will be copied to target region and all older snapshots for that database will be removed.
 
-You will be asked to specify the source and target regions to use by Lambda when creating the CloudFormation stack.
+You will be asked to specify the target region to use by Lambda when creating the CloudFormation stack. The stack needs
+to be created in the same region where the RDS databases that you want to use it for are located.
 
 You can also limit the function to only act for specific databases - specify the list of names in the "Databases to use for"
 parameter when creating the CloudFormation stack. If you leave it empty, Lambda will trigger for all RDS instances within

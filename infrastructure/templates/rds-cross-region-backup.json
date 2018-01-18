@@ -20,10 +20,9 @@
             "ParameterGroups": [
                 {
                     "Label": {
-                        "default": "Regions configuration"
+                        "default": "Region configuration"
                     },
                     "Parameters": [
-                        "SourceRegionParameter",
                         "TargetRegionParameter"
                     ]
                 },
@@ -40,9 +39,6 @@
                 "DatabasesToUse": {
                     "default": "Databases to use for"
                 },
-                "SourceRegionParameter": {
-                    "default": "Source region"
-                },
                 "TargetRegionParameter": {
                     "default": "Target region"
                 }
@@ -53,12 +49,6 @@
         "DatabasesToUse": {
             "Description": "Optional: comma-delimited list of RDS instance names to use. Leave empty to use for all instances in source region.",
             "Type": "CommaDelimitedList"
-        },
-        "SourceRegionParameter": {
-            "AllowedPattern": "^[a-z]+-[a-z]+-[0-9]+$",
-            "ConstraintDescription": "The source region needs to be valid AWS region, for example: us-east-1",
-            "Description": "Region where your RDS database resides in (for example: eu-west-1)",
-            "Type": "String"
         },
         "TargetRegionParameter": {
             "AllowedPattern": "^[a-z]+-[a-z]+-[0-9]+$",
@@ -77,7 +67,7 @@
                 "Environment": {
                     "Variables": {
                         "SOURCE_REGION": {
-                            "Ref": "SourceRegionParameter"
+                            "Ref": "AWS::Region"
                         },
                         "TARGET_REGION": {
                             "Ref": "TargetRegionParameter"

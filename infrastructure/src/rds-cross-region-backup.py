@@ -1,4 +1,4 @@
-from troposphere import Template, GetAtt, Join, Ref, Parameter, Equals, If, AWS_NO_VALUE
+from troposphere import Template, GetAtt, Join, Ref, Parameter, Equals, If, AWS_NO_VALUE, AWS_REGION
 from troposphere import awslambda, iam, sns, rds
 from awacs import aws, sts
 import os
@@ -6,14 +6,6 @@ import os
 template = Template()
 
 template.add_description('Resources copying RDS backups to another region')
-
-source_region_parameter = template.add_parameter(Parameter(
-    "SourceRegionParameter",
-    Type="String",
-    Description="Region where your RDS database resides in (for example: eu-west-1)",
-    AllowedPattern="^[a-z]+-[a-z]+-[0-9]+$",
-    ConstraintDescription="The source region needs to be valid AWS region, for example: us-east-1"
-))
 
 target_region_parameter = template.add_parameter(Parameter(
     "TargetRegionParameter",
@@ -36,10 +28,9 @@ template.add_metadata({
         "ParameterGroups": [
             {
                 "Label": {
-                    "default": "Regions configuration"
+                    "default": "Region configuration"
                 },
                 "Parameters": [
-                    "SourceRegionParameter",
                     "TargetRegionParameter",
                 ]
             },
@@ -53,7 +44,6 @@ template.add_metadata({
             },
         ],
         "ParameterLabels": {
-            "SourceRegionParameter": {"default": "Source region"},
             "TargetRegionParameter": {"default": "Target region"},
             "DatabasesToUse": {"default": "Databases to use for"},
         }
@@ -121,7 +111,7 @@ backup_rds_function = template.add_resource(awslambda.Function(
     Timeout=10,
     Environment=awslambda.Environment(
         Variables={
-            'SOURCE_REGION': Ref(source_region_parameter),
+            'SOURCE_REGION': Ref(AWS_REGION),
             'TARGET_REGION': Ref(target_region_parameter)
         }
     )
