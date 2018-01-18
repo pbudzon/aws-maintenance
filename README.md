@@ -6,7 +6,7 @@ Collection of scripts and Lambda functions used for maintaining various AWS reso
 Lambda function used to copy RDS snapshot from one region to another, to allow for the database to be restored in case of region failure.
 One (latest) copy for each RDS instance is kept in the target region.
 
-Use `infrastructure/templates/rds-cross-region-backup.json` CloudFormation template to create the Lambda and all resources it needs.
+Use `infrastructure/templates/rds-cross-region-backup.json` CloudFormation template to create the Lambda and all resources it needs. Make sure to create the CF stack in the source region, i.e. in the same region the RDS instance is running.
 It will create a subscription from RDS to Lambda, whenever an automated RDS snapshot is made - that snapshot will be copied to
 target region and all older snapshots for that database will be removed.
 
