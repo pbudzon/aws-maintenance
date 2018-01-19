@@ -224,4 +224,4 @@ t.add_output(Output(
     Value=Ref(notificationTopic)
 ))
 
-print t.to_json()
+print(t.to_json())
