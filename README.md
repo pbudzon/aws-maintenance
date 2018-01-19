@@ -36,7 +36,7 @@ parameter empty.
 
 ### Guide - how to use (and test)
 1. Download the [backup-rds.py](https://raw.githubusercontent.com/pbudzon/aws-maintenance/master/backup-rds.py) file
- from this repository and zip it into a file called `rds-backup.zip` (for example: `zip rds-backup.zip backup-rds.py`).
+ from this repository and zip it into a file called `backup-rds.zip` (for example: `zip backup-rds.zip backup-rds.py`).
 1. Upload the ZIP file to an S3 bucket on your AWS account in the same region where your RDS instances live.
 1. Open `infrastructure/templates/rds-cross-region-backup.json` and find this line:
     ```
