@@ -101,7 +101,7 @@
                         }
                     }
                 },
-                "Handler": "index.lambda_handler",
+                "Handler": "backup-rds.lambda_handler",
                 "MemorySize": 128,
                 "Role": {
                     "Fn::GetAtt": [

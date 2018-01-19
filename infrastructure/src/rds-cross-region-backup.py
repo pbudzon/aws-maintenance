@@ -124,7 +124,7 @@ backup_rds_function = template.add_resource(awslambda.Function(
         S3Bucket="YOUR_S3_BUCKET_NAME_HERE",
         S3Key="backup-rds.zip"
     ),
-    Handler='index.lambda_handler',
+    Handler='backup-rds.lambda_handler',
     MemorySize=128,
     Role=GetAtt(backup_rds_role, 'Arn'),
     Runtime='python3.6',
