@@ -1,7 +1,6 @@
 from troposphere import Template, GetAtt, Join, Ref, Parameter, Equals, If, AWS_NO_VALUE, AWS_REGION
 from troposphere import awslambda, iam, sns, rds
 from awacs import aws, sts
-import os
 
 template = Template()
 
@@ -21,7 +20,14 @@ databases_to_use_parameter = template.add_parameter(Parameter(
     Description="Optional: comma-delimited list of RDS instance names to use. Leave empty to use for all instances in source region."
 ))
 
+kms_key_parameter = template.add_parameter(Parameter(
+    "KMSKeyParameter",
+    Type="String",
+    Description="KMS Key ARN in target region. Required if using encrypted RDS instances, optional otherwise.",
+))
+
 template.add_condition("UseAllDatabases", Equals(Join("", Ref(databases_to_use_parameter)), ""))
+template.add_condition("UseEncryption", Equals(Ref(kms_key_parameter), ""), )
 
 template.add_metadata({
     "AWS::CloudFormation::Interface": {
@@ -36,6 +42,14 @@ template.add_metadata({
             },
             {
                 "Label": {
+                    "default": "Encryption - see https://github.com/pbudzon/aws-maintenance#encryption for details"
+                },
+                "Parameters": [
+                    "KMSKeyParameter",
+                ]
+            },
+            {
+                "Label": {
                     "default": "Optional: limit to specific RDS database(s)"
                 },
                 "Parameters": [
@@ -46,6 +60,7 @@ template.add_metadata({
         "ParameterLabels": {
             "TargetRegionParameter": {"default": "Target region"},
             "DatabasesToUse": {"default": "Databases to use for"},
+            "KMSKeyParameter": {"default": "KMS Key in target region"}
         }
     }
 })
@@ -85,24 +100,29 @@ backup_rds_role = template.add_resource(iam.Role(
                     aws.Action('logs', 'PutLogEvents'),
                 ],
                 Resource=['arn:aws:logs:*:*:*']
-            )
+            ),
+            If(
+                "UseEncryption",
+                Ref(AWS_NO_VALUE),
+                aws.Statement(
+                    Effect=aws.Allow,
+                    Action=[
+                        aws.Action('kms', 'Create*'),  # Don't ask me why this is needed...
+                        aws.Action('kms', 'DescribeKey'),
+                    ],
+                    Resource=[Ref(kms_key_parameter)]
+                ),
+            ),
         ])
     )]
 ))
-
-# Lambda itself
-source_file = os.path.realpath(__file__ + '/../../../backup-rds.py')
-with open(source_file, 'r') as content_file:
-    content = content_file.read()
-
-if len(content) > 4096:
-    raise Exception("Backup RDS function too long, has {}!".format(len(content)))
 
 backup_rds_function = template.add_resource(awslambda.Function(
     'LambdaBackupRDSFunction',
     Description='Copies RDS backups to another region',
     Code=awslambda.Code(
-        ZipFile=content
+        S3Bucket="YOUR_S3_BUCKET_NAME_HERE",
+        S3Key="backup-rds.py"
     ),
     Handler='index.lambda_handler',
     MemorySize=128,
@@ -112,7 +132,8 @@ backup_rds_function = template.add_resource(awslambda.Function(
     Environment=awslambda.Environment(
         Variables={
             'SOURCE_REGION': Ref(AWS_REGION),
-            'TARGET_REGION': Ref(target_region_parameter)
+            'TARGET_REGION': Ref(target_region_parameter),
+            'KMS_KEY_ID': Ref(kms_key_parameter)
         }
     )
 ))

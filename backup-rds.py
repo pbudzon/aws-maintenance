@@ -1,11 +1,16 @@
-import boto3
-import botocore
-import operator
 import json
+import operator
 import os
 
+import boto3
+import botocore
+
+# Env variables
 SOURCE_REGION = os.environ.get('SOURCE_REGION')
 TARGET_REGION = os.environ.get('TARGET_REGION')
+KMS_KEY_ID = os.environ.get('KMS_KEY_ID', "")
+
+# Global clients
 SOURCE_CLIENT = boto3.client('rds', SOURCE_REGION)
 TARGET_CLIENT = boto3.client('rds', TARGET_REGION)
 
@@ -39,13 +44,32 @@ def copy_latest_snapshot(account_id, instance_name):
         TARGET_CLIENT.describe_db_snapshots(
             DBSnapshotIdentifier=copy_name
         )
+
+        print("{} is already copied to {}".format(copy_name, TARGET_REGION))
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == "DBSnapshotNotFound":
             source_snapshot_arn = "arn:aws:rds:{}:{}:snapshot:{}".format(SOURCE_REGION, account_id, snapshot_name)
+            snapshot_details = SOURCE_CLIENT.describe_db_snapshots(
+                DBSnapshotIdentifier=source_snapshot_arn,
+            )
+
+            # No key, but snapshot is encrypted
+            if snapshot_details['DBSnapshots'][0]['Encrypted'] and KMS_KEY_ID == "":
+                raise Exception(
+                    "Snapshot is encrypted, but no encryption key specified for copy! " +
+                    "Set KMS Key ID parameter in CloudFormation stack")
+
+            # Key provided, but snapshot not encrypted (notice only)
+            if KMS_KEY_ID != "" and not snapshot_details['DBSnapshots'][0]['Encrypted']:
+                print("Snapshot is not encrypted, but KMS key specified - copy WILL BE encrypted")
+
+            # Trigger a copy operation
             response = TARGET_CLIENT.copy_db_snapshot(
                 SourceDBSnapshotIdentifier=source_snapshot_arn,
                 TargetDBSnapshotIdentifier=copy_name,
-                CopyTags=True
+                CopyTags=True,
+                KmsKeyId=KMS_KEY_ID,
+                SourceRegion=SOURCE_REGION  # Ref: https://github.com/boto/botocore/issues/1273
             )
 
             # Check the status of the copy
@@ -54,10 +78,8 @@ def copy_latest_snapshot(account_id, instance_name):
 
             print("Copied {} to {}".format(copy_name, TARGET_REGION))
             return
-        else:  # another error happened
+        else:  # Another error happened, re-raise
             raise e
-
-    print("{} is already copied to {}".format(copy_name, TARGET_REGION))
 
 
 def remove_old_snapshots(instance_name):
