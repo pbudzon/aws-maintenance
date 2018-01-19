@@ -122,7 +122,7 @@ backup_rds_function = template.add_resource(awslambda.Function(
     Description='Copies RDS backups to another region',
     Code=awslambda.Code(
         S3Bucket="YOUR_S3_BUCKET_NAME_HERE",
-        S3Key="backup-rds.py"
+        S3Key="backup-rds.zip"
     ),
     Handler='index.lambda_handler',
     MemorySize=128,

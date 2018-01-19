@@ -7,4 +7,4 @@ clean:
 	rm -f $(TARGETS)
 
 templates/%.json: src/%.py
-	python $< > $@
+	python3 $< > $@

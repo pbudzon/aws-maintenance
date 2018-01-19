@@ -36,13 +36,16 @@ parameter empty.
 
 ### Guide - how to use (and test)
 1. Download the [backup-rds.py](https://raw.githubusercontent.com/pbudzon/aws-maintenance/master/backup-rds.py) file
- from this repository.
-1. Upload this file to an S3 bucket on your AWS account in the same region where your RDS instances live.
+ from this repository and zip it into a file called `rds-backup.zip` (for example: `zip rds-backup.zip backup-rds.py`).
+1. Upload the ZIP file to an S3 bucket on your AWS account in the same region where your RDS instances live.
 1. Open `infrastructure/templates/rds-cross-region-backup.json` and find this line:
     ```
     "S3Bucket": "YOUR_S3_BUCKET_NAME_HERE",
     ```
     Replace `YOUR_S3_BUCKET_NAME_HERE` with your bucket name.
+    
+    - If you upload the file into a directory in S3 bucket, you also need to adjust the `S3Key` in a line below, for 
+    example `"S3Key": "my_directory/backup-rds.zip"`. 
 1. Save the corrected JSON file and create a new CloudFormation stack using it.
 1. CloudFormation will ask you for the following parameters:
     - Required: **Target region** - provide the id of the AWS region where the copied snapshots should be stored, like

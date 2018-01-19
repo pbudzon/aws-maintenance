@@ -85,7 +85,7 @@
             "Properties": {
                 "Code": {
                     "S3Bucket": "YOUR_S3_BUCKET_NAME_HERE",
-                    "S3Key": "backup-rds.py"
+                    "S3Key": "backup-rds.zip"
                 },
                 "Description": "Copies RDS backups to another region",
                 "Environment": {
