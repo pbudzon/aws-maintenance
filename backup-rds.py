@@ -182,7 +182,7 @@ def copy_latest_snapshot(account_id, instance_name, is_aurora):
                 )
 
             # Check the status of the copy
-            if response[response_list_key]["Status"] not in ("pending", "available"):
+            if response[response_list_key]["Status"] not in ("pending", "available", "copying"):
                 raise Exception("Copy operation for {} failed!".format(copy_name))
 
             print("Copied {} to {}".format(copy_name, TARGET_REGION))
@@ -245,13 +245,15 @@ def remove_old_snapshots(instance_name, is_aurora):
 def lambda_handler(event, context):
     account_id = context.invoked_function_arn.split(":")[4]
 
-    # TODO: check this works
     # Scheduled event for Aurora
     if 'source' in event and event['source'] == "aws.events":
         clusters_to_use = os.environ.get("CLUSTERS_TO_USE", None)
         if clusters_to_use:
             clusters_to_use = clusters_to_use.split(",")
         clusters = get_clusters(clusters_to_use)
+
+        if len(clusters) == 0:
+            raise Exception("No matching clusters found")
 
         for cluster in clusters:
             copy_latest_snapshot(account_id, cluster, True)

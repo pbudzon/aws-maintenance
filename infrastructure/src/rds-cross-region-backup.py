@@ -30,7 +30,8 @@ include_aurora_clusters_parameter = template.add_parameter(Parameter(
 
 clusters_to_use_parameter = template.add_parameter(Parameter(
     "ClustersToUse",
-    Type="CommaDelimitedList",
+    Type="String",
+    Default="",
     Description="Optional: If including Aurora clusters - comma-delimited list of Aurora Clusters to use for. Leave empty to use for all clusters in source region."
 ))
 
@@ -39,6 +40,20 @@ kms_key_parameter = template.add_parameter(Parameter(
     Type="String",
     Description="KMS Key ARN in target region. Required if using encrypted RDS instances, optional otherwise.",
 ))
+
+s3_bucket_parameter = template.add_parameter(Parameter(
+    "S3BucketParameter",
+    Type="String",
+    Description="Name of the S3 bucket where you uploaded the source code zip",
+))
+
+source_zip_parameter = template.add_parameter(Parameter(
+    "SourceZipParameter",
+    Type="String",
+    Default="backup-rds.zip",
+    Description="Name of the zip file inside the S3 bucket",
+))
+
 
 template.add_condition("UseAllDatabases", Equals(Join("", Ref(databases_to_use_parameter)), ""))
 template.add_condition("UseEncryption", Equals(Ref(kms_key_parameter), ""), )
@@ -49,10 +64,12 @@ template.add_metadata({
         "ParameterGroups": [
             {
                 "Label": {
-                    "default": "Region configuration"
+                    "default": "Basic configuration"
                 },
                 "Parameters": [
                     "TargetRegionParameter",
+                    "S3BucketParameter",
+                    "SourceZipParameter",
                 ]
             },
             {
@@ -86,7 +103,9 @@ template.add_metadata({
             "DatabasesToUse": {"default": "Databases to use for"},
             "KMSKeyParameter": {"default": "KMS Key in target region"},
             "IncludeAuroraClusters": {"default": "Use for Aurora clusters"},
-            "ClustersToUse": {"default": "Aurora clusters to use for"}
+            "ClustersToUse": {"default": "Aurora clusters to use for"},
+            "S3BucketParameter": {"default": "Name of S3 bucket"},
+            "SourceZipParameter": {"default": "Name of ZIP file"},
         }
     }
 })
@@ -115,6 +134,9 @@ backup_rds_role = template.add_resource(iam.Role(
                     aws.Action('rds', 'DescribeDbSnapshots'),
                     aws.Action('rds', 'CopyDbSnapshot'),
                     aws.Action('rds', 'DeleteDbSnapshot'),
+                    aws.Action('rds', 'DescribeDbClusters'),
+                    aws.Action('rds', 'DescribeDbClusterSnapshots'),
+                    aws.Action('rds', 'CopyDBClusterSnapshot'),
                 ],
                 Resource=['*']
             ),
@@ -147,14 +169,14 @@ backup_rds_function = template.add_resource(awslambda.Function(
     'LambdaBackupRDSFunction',
     Description='Copies RDS backups to another region',
     Code=awslambda.Code(
-        S3Bucket="YOUR_S3_BUCKET_NAME_HERE",
-        S3Key="backup-rds.zip"
+        S3Bucket=Ref(s3_bucket_parameter),
+        S3Key=Ref(source_zip_parameter),
     ),
     Handler='backup-rds.lambda_handler',
     MemorySize=128,
     Role=GetAtt(backup_rds_role, 'Arn'),
     Runtime='python3.6',
-    Timeout=10,
+    Timeout=30,
     Environment=awslambda.Environment(
         Variables={
             'SOURCE_REGION': Ref(AWS_REGION),
@@ -193,7 +215,7 @@ template.add_resource(awslambda.Permission(
     SourceArn=Ref(rds_topic)
 ))
 
-template.add_resource(events.Rule(
+schedule_event = template.add_resource(events.Rule(
     "AuroraBackupEvent",
     Condition="IncludeAurora",
     Description="Copy Aurora clusters to another region",
@@ -205,6 +227,16 @@ template.add_resource(events.Rule(
             Id="backup_rds_function"
         )
     ]
+))
+
+# Permission for CloudWatch Events to trigger the Lambda
+template.add_resource(awslambda.Permission(
+    "EventsPermissionForLambda",
+    Condition="IncludeAurora",
+    Action="lambda:invokeFunction",
+    FunctionName=Ref(backup_rds_function),
+    Principal="events.amazonaws.com",
+    SourceArn=GetAtt(schedule_event, "Arn")
 ))
 
 print(template.to_json())

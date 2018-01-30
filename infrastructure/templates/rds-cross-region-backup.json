@@ -1,5 +1,13 @@
 {
     "Conditions": {
+        "IncludeAurora": {
+            "Fn::Equals": [
+                {
+                    "Ref": "IncludeAuroraClusters"
+                },
+                "Yes"
+            ]
+        },
         "UseAllDatabases": {
             "Fn::Equals": [
                 {
@@ -28,10 +36,12 @@
             "ParameterGroups": [
                 {
                     "Label": {
-                        "default": "Region configuration"
+                        "default": "Basic configuration"
                     },
                     "Parameters": [
-                        "TargetRegionParameter"
+                        "TargetRegionParameter",
+                        "S3BucketParameter",
+                        "SourceZipParameter"
                     ]
                 },
                 {
@@ -49,14 +59,35 @@
                     "Parameters": [
                         "DatabasesToUse"
                     ]
+                },
+                {
+                    "Label": {
+                        "default": "Optional: Aurora support"
+                    },
+                    "Parameters": [
+                        "IncludeAuroraClusters",
+                        "ClustersToUse"
+                    ]
                 }
             ],
             "ParameterLabels": {
+                "ClustersToUse": {
+                    "default": "Aurora clusters to use for"
+                },
                 "DatabasesToUse": {
                     "default": "Databases to use for"
                 },
+                "IncludeAuroraClusters": {
+                    "default": "Use for Aurora clusters"
+                },
                 "KMSKeyParameter": {
                     "default": "KMS Key in target region"
+                },
+                "S3BucketParameter": {
+                    "default": "Name of S3 bucket"
+                },
+                "SourceZipParameter": {
+                    "default": "Name of ZIP file"
                 },
                 "TargetRegionParameter": {
                     "default": "Target region"
@@ -65,12 +96,35 @@
         }
     },
     "Parameters": {
+        "ClustersToUse": {
+            "Default": "",
+            "Description": "Optional: If including Aurora clusters - comma-delimited list of Aurora Clusters to use for. Leave empty to use for all clusters in source region.",
+            "Type": "String"
+        },
         "DatabasesToUse": {
-            "Description": "Optional: comma-delimited list of RDS instance names to use. Leave empty to use for all instances in source region.",
+            "Description": "Optional: comma-delimited list of RDS instance (not Aurora clusters!) names to use. Leave empty to use for all instances in source region.",
             "Type": "CommaDelimitedList"
+        },
+        "IncludeAuroraClusters": {
+            "AllowedValues": [
+                "Yes",
+                "No"
+            ],
+            "Default": "No",
+            "Description": "Choose 'Yes' if you have Aurora Clusters that you want to use this for, will add daily schedule.",
+            "Type": "String"
         },
         "KMSKeyParameter": {
             "Description": "KMS Key ARN in target region. Required if using encrypted RDS instances, optional otherwise.",
+            "Type": "String"
+        },
+        "S3BucketParameter": {
+            "Description": "Name of the S3 bucket where you uploaded the source code zip",
+            "Type": "String"
+        },
+        "SourceZipParameter": {
+            "Default": "backup-rds.zip",
+            "Description": "Name of the zip file inside the S3 bucket",
             "Type": "String"
         },
         "TargetRegionParameter": {
@@ -81,15 +135,59 @@
         }
     },
     "Resources": {
+        "AuroraBackupEvent": {
+            "Condition": "IncludeAurora",
+            "Properties": {
+                "Description": "Copy Aurora clusters to another region",
+                "ScheduleExpression": "rate(1 day)",
+                "State": "ENABLED",
+                "Targets": [
+                    {
+                        "Arn": {
+                            "Fn::GetAtt": [
+                                "LambdaBackupRDSFunction",
+                                "Arn"
+                            ]
+                        },
+                        "Id": "backup_rds_function"
+                    }
+                ]
+            },
+            "Type": "AWS::Events::Rule"
+        },
+        "EventsPermissionForLambda": {
+            "Condition": "IncludeAurora",
+            "Properties": {
+                "Action": "lambda:invokeFunction",
+                "FunctionName": {
+                    "Ref": "LambdaBackupRDSFunction"
+                },
+                "Principal": "events.amazonaws.com",
+                "SourceArn": {
+                    "Fn::GetAtt": [
+                        "AuroraBackupEvent",
+                        "Arn"
+                    ]
+                }
+            },
+            "Type": "AWS::Lambda::Permission"
+        },
         "LambdaBackupRDSFunction": {
             "Properties": {
                 "Code": {
-                    "S3Bucket": "YOUR_S3_BUCKET_NAME_HERE",
-                    "S3Key": "backup-rds.zip"
+                    "S3Bucket": {
+                        "Ref": "S3BucketParameter"
+                    },
+                    "S3Key": {
+                        "Ref": "SourceZipParameter"
+                    }
                 },
                 "Description": "Copies RDS backups to another region",
                 "Environment": {
                     "Variables": {
+                        "CLUSTERS_TO_USE": {
+                            "Ref": "ClustersToUse"
+                        },
                         "KMS_KEY_ID": {
                             "Ref": "KMSKeyParameter"
                         },
@@ -110,7 +208,7 @@
                     ]
                 },
                 "Runtime": "python3.6",
-                "Timeout": 10
+                "Timeout": 30
             },
             "Type": "AWS::Lambda::Function"
         },
@@ -139,7 +237,10 @@
                                     "Action": [
                                         "rds:DescribeDbSnapshots",
                                         "rds:CopyDbSnapshot",
-                                        "rds:DeleteDbSnapshot"
+                                        "rds:DeleteDbSnapshot",
+                                        "rds:DescribeDbClusters",
+                                        "rds:DescribeDbClusterSnapshots",
+                                        "rds:CopyDBClusterSnapshot"
                                     ],
                                     "Effect": "Allow",
                                     "Resource": [

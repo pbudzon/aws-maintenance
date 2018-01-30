@@ -34,33 +34,42 @@ that key.
 If you don't use encryption and don't want your snapshots to be encrypted, leave the `KMS Key in target region` 
 parameter empty.
 
-### Aurora
-TODO
-- No event for automated backups, needs schedule, once a day
+### Aurora clusters
+Since Aurora clusters do not offer an event notification for their automated backups, a daily schedule needs to be used
+to copy the latest snapshot over to the target region. If you're using clusters, set `Use for Aurora clusters` to 'Yes'
+when creating the CloudFormation stack. You can limit which clusters' snapshots are copied by specifying a comma-delimited 
+list in `Aurora clusters to use for` parameter.
+The snapshots will be copied over once a day, at a random time of AWS choosing (using CloudWatch Event with `rate(1 day)`).
 
-### Guide - how to use (and test)
+### Guide
+
+#### How to use for the first time
 1. Download the [backup-rds.py](https://raw.githubusercontent.com/pbudzon/aws-maintenance/master/backup-rds.py) file
  from this repository and zip it into a file called `backup-rds.zip` (for example: `zip backup-rds.zip backup-rds.py`).
 1. Upload the ZIP file to an S3 bucket on your AWS account in the same region where your RDS instances live.
-1. Open `infrastructure/templates/rds-cross-region-backup.json` and find this line:
-    ```
-    "S3Bucket": "YOUR_S3_BUCKET_NAME_HERE",
-    ```
-    Replace `YOUR_S3_BUCKET_NAME_HERE` with your bucket name.
-    
-    - If you upload the file into a directory in S3 bucket, you also need to adjust the `S3Key` in a line below, for 
-    example `"S3Key": "my_directory/backup-rds.zip"`. 
-1. Save the corrected JSON file and create a new CloudFormation stack using it.
+1. Create a new CloudFormation stack using the template: `infrastructure/templates/rds-cross-region-backup.json`.
 1. CloudFormation will ask you for the following parameters:
     - Required: **Target region** - provide the id of the AWS region where the copied snapshots should be stored, like
      'eu-central-1'. Those are listed in
       [AWS documentation](https://docs.aws.amazon.com/general/latest/gr/rande.html#rds_region).
+    - Required: **Name of S3 bucket** - name of the S3 bucket where you uploaded the ZIP in earlier step.
+    - Required: **Name of ZIP file** - name of the ZIP file in S3 bucket you uploaded. If you uploaded it into a directory,
+    provide a path to the file in S3 (for example `lambda_code/backup-rds.zip`)
     - Required/Optional: **KMS Key in target region** - if your RDS instances are encrypted, provide an ARN of a KMS key
      in the target region. See Encryption section above. 
     - Optional: **Databases to use for** - if you want limit the functionality to only specific RDS instances, provide 
     a comma-delimited list of their names.
+    - Optional: **Use for Aurora clusters** - select "Yes" if you have any Aurora Clusters that you want this code to work
+    with.
+    - Optional: **Aurora clusters to use for** (applies only if you select "Yes" above) - if you want to limit the 
+    functionality to only specific Aurora Clusters, provide a comma-delimited list of clusters names.
 
+#### How to update to the latest version
+Follow the update steps, but name the zip file something else that before - for example, if you uploaded `backup-rds.zip`,
+upload the new file as `backup-rds-1.zip`. Update your CloudFormation stack with the latest template from this repo, 
+and provide that new ZIP file name in *Name of ZIP file* parameter. 
 
+#### How to test
 Once all resources are created, you can test your Lambda from the Console, by using the following test event:
 ```
 {
@@ -87,20 +96,23 @@ Once all resources are created, you can test your Lambda from the Console, by us
 ```
 Replace the `PUT_YOUR_RDS_NAME_HERE` in the JSON string with a name of any of your RDS instances. 
 
-TODO:
-Scheduled event for Aurora:
+For Aurora Clusters, use the below event (no need to change anything):
 ```
 {
-  "id": "53dc4d37-cffa-4f76-80c9-8b7d4a4d2eaa",
+  "version": "0",
+  "id": "eb6d8ba9-c5c2-3269-3ac4-9918a9df74d9",
   "detail-type": "Scheduled Event",
   "source": "aws.events",
   "account": "123456789012",
-  "time": "2015-10-08T16:53:06Z",
-  "region": "us-east-1",
-  "resources": [ "arn:aws:events:us-east-1:123456789012:rule/MyScheduledRule" ],
+  "time": "2018-01-30T21:11:00Z",
+  "region": "eu-west-1",
+  "resources": [
+    "arn:aws:events:eu-west-1:123456789012:rule/eventName"
+  ],
   "detail": {}
 }
 ```
+The code will go through all clusters (or those listed in *Aurora clusters to use for* parameter).
 
 
 ## Monitor CloudTrail events (cloudtrail-monitor.py)
