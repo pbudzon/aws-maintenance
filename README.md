@@ -34,6 +34,10 @@ that key.
 If you don't use encryption and don't want your snapshots to be encrypted, leave the `KMS Key in target region` 
 parameter empty.
 
+### Aurora
+TODO
+- No event for automated backups, needs schedule, once a day
+
 ### Guide - how to use (and test)
 1. Download the [backup-rds.py](https://raw.githubusercontent.com/pbudzon/aws-maintenance/master/backup-rds.py) file
  from this repository and zip it into a file called `backup-rds.zip` (for example: `zip backup-rds.zip backup-rds.py`).
@@ -82,6 +86,21 @@ Once all resources are created, you can test your Lambda from the Console, by us
 }
 ```
 Replace the `PUT_YOUR_RDS_NAME_HERE` in the JSON string with a name of any of your RDS instances. 
+
+TODO:
+Scheduled event for Aurora:
+```
+{
+  "id": "53dc4d37-cffa-4f76-80c9-8b7d4a4d2eaa",
+  "detail-type": "Scheduled Event",
+  "source": "aws.events",
+  "account": "123456789012",
+  "time": "2015-10-08T16:53:06Z",
+  "region": "us-east-1",
+  "resources": [ "arn:aws:events:us-east-1:123456789012:rule/MyScheduledRule" ],
+  "detail": {}
+}
+```
 
 
 ## Monitor CloudTrail events (cloudtrail-monitor.py)

@@ -1,6 +1,6 @@
-from troposphere import Template, GetAtt, Join, Ref, Parameter, Equals, If, AWS_NO_VALUE, AWS_REGION
-from troposphere import awslambda, iam, sns, rds
 from awacs import aws, sts
+from troposphere import Template, GetAtt, Join, Ref, Parameter, Equals, If, AWS_NO_VALUE, AWS_REGION
+from troposphere import awslambda, iam, sns, rds, events
 
 template = Template()
 
@@ -17,7 +17,21 @@ target_region_parameter = template.add_parameter(Parameter(
 databases_to_use_parameter = template.add_parameter(Parameter(
     "DatabasesToUse",
     Type="CommaDelimitedList",
-    Description="Optional: comma-delimited list of RDS instance names to use. Leave empty to use for all instances in source region."
+    Description="Optional: comma-delimited list of RDS instance (not Aurora clusters!) names to use. Leave empty to use for all instances in source region."
+))
+
+include_aurora_clusters_parameter = template.add_parameter(Parameter(
+    "IncludeAuroraClusters",
+    Type="String",
+    AllowedValues=["Yes", "No"],
+    Default="No",
+    Description="Choose 'Yes' if you have Aurora Clusters that you want to use this for, will add daily schedule."
+))
+
+clusters_to_use_parameter = template.add_parameter(Parameter(
+    "ClustersToUse",
+    Type="CommaDelimitedList",
+    Description="Optional: If including Aurora clusters - comma-delimited list of Aurora Clusters to use for. Leave empty to use for all clusters in source region."
 ))
 
 kms_key_parameter = template.add_parameter(Parameter(
@@ -28,6 +42,7 @@ kms_key_parameter = template.add_parameter(Parameter(
 
 template.add_condition("UseAllDatabases", Equals(Join("", Ref(databases_to_use_parameter)), ""))
 template.add_condition("UseEncryption", Equals(Ref(kms_key_parameter), ""), )
+template.add_condition("IncludeAurora", Equals(Ref(include_aurora_clusters_parameter), "Yes"))
 
 template.add_metadata({
     "AWS::CloudFormation::Interface": {
@@ -56,11 +71,22 @@ template.add_metadata({
                     "DatabasesToUse",
                 ]
             },
+            {
+                "Label": {
+                    "default": "Optional: Aurora support"
+                },
+                "Parameters": [
+                    "IncludeAuroraClusters",
+                    "ClustersToUse"
+                ]
+            },
         ],
         "ParameterLabels": {
             "TargetRegionParameter": {"default": "Target region"},
             "DatabasesToUse": {"default": "Databases to use for"},
-            "KMSKeyParameter": {"default": "KMS Key in target region"}
+            "KMSKeyParameter": {"default": "KMS Key in target region"},
+            "IncludeAuroraClusters": {"default": "Use for Aurora clusters"},
+            "ClustersToUse": {"default": "Aurora clusters to use for"}
         }
     }
 })
@@ -133,7 +159,8 @@ backup_rds_function = template.add_resource(awslambda.Function(
         Variables={
             'SOURCE_REGION': Ref(AWS_REGION),
             'TARGET_REGION': Ref(target_region_parameter),
-            'KMS_KEY_ID': Ref(kms_key_parameter)
+            'KMS_KEY_ID': Ref(kms_key_parameter),
+            'CLUSTERS_TO_USE': Ref(clusters_to_use_parameter)
         }
     )
 ))
@@ -164,6 +191,20 @@ template.add_resource(awslambda.Permission(
     FunctionName=Ref(backup_rds_function),
     Principal="sns.amazonaws.com",
     SourceArn=Ref(rds_topic)
+))
+
+template.add_resource(events.Rule(
+    "AuroraBackupEvent",
+    Condition="IncludeAurora",
+    Description="Copy Aurora clusters to another region",
+    ScheduleExpression="rate(1 day)",
+    State="ENABLED",
+    Targets=[
+        events.Target(
+            Arn=GetAtt(backup_rds_function, "Arn"),
+            Id="backup_rds_function"
+        )
+    ]
 ))
 
 print(template.to_json())
