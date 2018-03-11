@@ -114,6 +114,60 @@ For Aurora Clusters, use the below event (no need to change anything):
 ```
 The code will go through all clusters (or those listed in *Aurora clusters to use for* parameter).
 
+## Automated EC2 storage backups and retention management (ebs-snapshots.py)
+
+Lambda function which will automatically create daily snapshots of instances tagged with "Backup" tag (name can be 
+customized).
+The tag should contain a number of days the snapshot should be retained for - after that date, it will be deleted when
+this Lambda is executed. 
+
+### Notes
+- Encrypted volumes' snapshots will retain the encryption and use the same encryption key. 
+- Unencrypted volumes' snapshots will remain unencrypted.
+- Default retention period is 7 days (can be changed in Lambda code, see below).
+- Lambda can be run multiple times a day if needed, it will NOT create duplicated snapshots in the same day.
+- Tags from EC2 instance will be copied to the snapshot (except "Backup" tag), and a new tag "CreatedBy" will be added 
+with this Lambda's name.
+- If you have a lot of instances to snapshot, you may need to extend the Lambda execution time (or schedule it to be 
+executed multiple times a day).
+
+### Guide
+
+#### How to use for the first time
+1. Download the [ebs-snapshots.py](https://raw.githubusercontent.com/pbudzon/aws-maintenance/master/ebs-snapshots.py) 
+file from this repository and zip it into a file called `ebs-snapshots.zip` (for example: `zip ebs-snapshots.zip 
+ebs-snapshots.py`).
+1. Upload the ZIP file to an S3 bucket on your AWS account.
+1. Create a new CloudFormation stack using the template: `infrastructure/templates/create-ebs-snapshots.json`.
+1. CloudFormation will ask you for the following parameters:    
+    - Required: **Name of S3 bucket** - name of the S3 bucket where you uploaded the ZIP in earlier step.
+    - Required: **Name of ZIP file** - name of the ZIP file in S3 bucket you uploaded. If you uploaded it into a directory,
+    provide a path to the file in S3 (for example `lambda_code/ebs-snapshots.zip`)
+1. Create the stack. 
+1. Add a tag called "Backup" to some instances, with a number of days (or 0) you want to retain their snapshots for as 
+the tag's value.
+1. That's it! CloudWatch Event Rule will be created that will trigger the Lambda once a day. You can
+ also trigger it manually from Lambda console.
+
+#### How to update to the latest version
+Follow the update steps, but name the zip file something else that before - for example, if you uploaded `ebs-snapshots.zip`,
+upload the new file as `ebs-snapshots-1.zip`. Update your CloudFormation stack with the latest template from this repo, 
+and provide that new ZIP file name in *Name of ZIP file* parameter. 
+
+#### How to test
+Trigger the Lambda from the console. Any (even empty) input will do, it will be ignored. Output from the Lambda will 
+list tagged EC2 instances found and which EBS snapshots were created.
+
+#### How to modify names of tags used by code or default retention period
+In `ebs-snapshots.py` file, one of the top few lines define the following variables, which you can change as needed:
+- `DEFAULT_RETENTION` - number of days the snapshots are retained for if the "Backup" tag value is zero (default: 7).
+- `BACKUP_TAG` - name of the tag on EC2 instances the code will look for (default: "Backup").
+- `DELETE_ON_TAG` - name of the tag with deletion date that will be added to snapshots (default: "DeleteOn"). Important: 
+If you change this AFTER some snapshots were already created with previous name, those snapshots will not be deleted 
+when their date is reached. Either update the tag name assigned to them, or delete them manually.
+
+After changing those values, follow the update guide above to deploy your new code.
+
 
 ## Monitor CloudTrail events (cloudtrail-monitor.py)
 

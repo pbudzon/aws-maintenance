@@ -1,0 +1,152 @@
+{
+    "Description": "Automated EBS snapshots and retention management",
+    "Metadata": {
+        "AWS::CloudFormation::Interface": {
+            "ParameterGroups": [
+                {
+                    "Label": {
+                        "default": "Basic configuration"
+                    },
+                    "Parameters": [
+                        "S3BucketParameter",
+                        "SourceZipParameter"
+                    ]
+                }
+            ],
+            "ParameterLabels": {
+                "S3BucketParameter": {
+                    "default": "Name of S3 bucket"
+                },
+                "SourceZipParameter": {
+                    "default": "Name of ZIP file"
+                }
+            }
+        }
+    },
+    "Parameters": {
+        "S3BucketParameter": {
+            "Description": "Name of the S3 bucket where you uploaded the source code zip",
+            "Type": "String"
+        },
+        "SourceZipParameter": {
+            "Default": "ebs-snapshots.zip",
+            "Description": "Name of the zip file inside the S3 bucket",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "EventsPermissionForLambda": {
+            "Properties": {
+                "Action": "lambda:invokeFunction",
+                "FunctionName": {
+                    "Ref": "LambdaFunction"
+                },
+                "Principal": "events.amazonaws.com",
+                "SourceArn": {
+                    "Fn::GetAtt": [
+                        "LambdaTriggerRule",
+                        "Arn"
+                    ]
+                }
+            },
+            "Type": "AWS::Lambda::Permission"
+        },
+        "LambdaFunction": {
+            "Properties": {
+                "Code": {
+                    "S3Bucket": {
+                        "Ref": "S3BucketParameter"
+                    },
+                    "S3Key": {
+                        "Ref": "SourceZipParameter"
+                    }
+                },
+                "Description": "Maintains EBS snapshots of tagged instances",
+                "Handler": "ebs-snapshots.lambda_handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.6",
+                "Timeout": 30
+            },
+            "Type": "AWS::Lambda::Function"
+        },
+        "LambdaRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "ec2:Describe*",
+                                        "ec2:CreateSnapshot",
+                                        "ec2:DeleteSnapshot",
+                                        "ec2:CreateTags",
+                                        "ec2:ModifySnapshotAttribute",
+                                        "ec2:ResetSnapshotAttribute"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                },
+                                {
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "arn:aws:logs:*:*:*"
+                                    ]
+                                }
+                            ]
+                        },
+                        "PolicyName": "AccessToEC2Snapshots"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "LambdaTriggerRule": {
+            "Properties": {
+                "Description": "Trigger EBS snapshot Lambda",
+                "ScheduleExpression": "rate(1 day)",
+                "State": "ENABLED",
+                "Targets": [
+                    {
+                        "Arn": {
+                            "Fn::GetAtt": [
+                                "LambdaFunction",
+                                "Arn"
+                            ]
+                        },
+                        "Id": "ebs-snapshot-lambda"
+                    }
+                ]
+            },
+            "Type": "AWS::Events::Rule"
+        }
+    }
+}
