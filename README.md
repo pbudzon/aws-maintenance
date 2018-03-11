@@ -11,18 +11,21 @@ Collection of scripts and Lambda functions used for maintaining various AWS reso
         * [How to use for the first time](#how-to-use-for-the-first-time)
         * [How to update to the latest version](#how-to-update-to-the-latest-version)
         * [How to test](#how-to-test)
+    * [Related blog posts](#related-blog-posts)
 - [Automated EC2 storage backups and retention management](#automated-ec2-storage-backups-and-retention-management-ebs-snapshotspy)
     * [Notes](#notes)
     * [Guide](#guide-1)
         * [How to use for the first time](#how-to-use-for-the-first-time-1)
         * [How to update to the latest version](#how-to-update-to-the-latest-version-1)
         * [How to test](#how-to-test-1)
-        * [How to modify names of tags used by code or default retention period](#how-to-modify-names-of-tags-used-by-code-or-default-retention-period) 
+        * [How to modify names of tags used by code or default retention period](#how-to-modify-names-of-tags-used-by-code-or-default-retention-period)
+    * [Related blog posts](#related-blog-posts-1) 
 - [Monitor CloudTrail events](#monitor-cloudtrail-events-cloudtrail-monitorpy)
 - [Other Lambdas](#other-lambdas)
     * [clean-base-images.py and clean-release-images.py](#clean-base-imagespy-and-clean-release-imagespy)
     * [clean-es-indices.py](#clean-es-indicespy)
     
+
 
 ## Cross-region RDS backups (backup-rds.py)
 
@@ -137,6 +140,12 @@ For Aurora Clusters, use the below event (no need to change anything):
 ```
 The code will go through all clusters (or those listed in *Aurora clusters to use for* parameter).
 
+### Related blog posts
+- [Copying RDS snapshot to another region for cross-region recovery](https://mysteriouscode.io/blog/copying-rds-snapshot-to-another-region-for-cross-region-recovery/)
+- [Complete code: cross-region RDS recovery](https://mysteriouscode.io/blog/complete-code-cross-region-rds-recovery/)
+- [Cross-region RDS recovery: encryption and Aurora support](https://mysteriouscode.io/blog/cross-region-rds-recovery-encryption-and-aurora-support/)
+
+
 ## Automated EC2 storage backups and retention management (ebs-snapshots.py)
 
 Lambda function which will automatically create daily snapshots of instances tagged with "Backup" tag (name can be 
@@ -191,6 +200,8 @@ when their date is reached. Either update the tag name assigned to them, or dele
 
 After changing those values, follow the update guide above to deploy your new code.
 
+### Related blog posts
+- [Complete code: Automated EC2 snapshots and retention management](https://mysteriouscode.io/blog/complete-code-automated-ec2-snapshots-and-retention-management/)
 
 ## Monitor CloudTrail events (cloudtrail-monitor.py)
 
