@@ -1,6 +1,29 @@
 # aws-maintenance
 Collection of scripts and Lambda functions used for maintaining various AWS resources.
 
+## Table of contents
+- [Cross-region RDS backups](#cross-region-rds-backups-backup-rdspy)
+    * [Regions](#regions)
+    * [Limit to specific RDS instances](#limit-to-specific-rds-instances)
+    * [Encryption](#encryption)
+    * [Aurora clusters](#aurora-clusters)
+    * [Guide](#guide)
+        * [How to use for the first time](#how-to-use-for-the-first-time)
+        * [How to update to the latest version](#how-to-update-to-the-latest-version)
+        * [How to test](#how-to-test)
+- [Automated EC2 storage backups and retention management](#automated-ec2-storage-backups-and-retention-management-ebs-snapshotspy)
+    * [Notes](#notes)
+    * [Guide](#guide-1)
+        * [How to use for the first time](#how-to-use-for-the-first-time-1)
+        * [How to update to the latest version](#how-to-update-to-the-latest-version-1)
+        * [How to test](#how-to-test-1)
+        * [How to modify names of tags used by code or default retention period](#how-to-modify-names-of-tags-used-by-code-or-default-retention-period) 
+- [Monitor CloudTrail events](#monitor-cloudtrail-events-cloudtrail-monitorpy)
+- [Other Lambdas](#other-lambdas)
+    * [clean-base-images.py and clean-release-images.py](#clean-base-imagespy-and-clean-release-imagespy)
+    * [clean-es-indices.py](#clean-es-indicespy)
+    
+
 ## Cross-region RDS backups (backup-rds.py)
 
 Lambda function used to copy RDS snapshot from one region to another, to allow for the database to be restored in case 
