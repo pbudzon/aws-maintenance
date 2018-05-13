@@ -221,7 +221,7 @@ You should probably review (and adjust) them to your needs as necessary. They ar
 
 ### clean-base-images.py and clean-release-images.py
 
-Remove AMIs from eu-west-1 (Ireland) to eu-central-1 (Frankfurt) based on different tags.
+Remove AMIs from eu-west-1 (Ireland) and eu-central-1 (Frankfurt) based on different tags.
 
 Meant to be used as a part of immutable infrastructure, where each project has a base AMI (tagged with `Type=BaseImage`) 
 and each release in contained within a new AMI based on it (tagged with `Type=ReleaseImage`). 
