@@ -238,6 +238,7 @@
                                         "rds:DescribeDbSnapshots",
                                         "rds:CopyDbSnapshot",
                                         "rds:DeleteDbSnapshot",
+                                        "rds:DeleteDbClusterSnapshot",
                                         "rds:DescribeDbClusters",
                                         "rds:DescribeDbClusterSnapshots",
                                         "rds:CopyDBClusterSnapshot"
