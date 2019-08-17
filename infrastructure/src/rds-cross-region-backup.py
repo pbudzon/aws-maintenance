@@ -134,6 +134,7 @@ backup_rds_role = template.add_resource(iam.Role(
                     aws.Action('rds', 'DescribeDbSnapshots'),
                     aws.Action('rds', 'CopyDbSnapshot'),
                     aws.Action('rds', 'DeleteDbSnapshot'),
+                    aws.Action('rds', 'DeleteDbClusterSnapshot'),
                     aws.Action('rds', 'DescribeDbClusters'),
                     aws.Action('rds', 'DescribeDbClusterSnapshots'),
                     aws.Action('rds', 'CopyDBClusterSnapshot'),
